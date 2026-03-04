@@ -4,10 +4,10 @@ import google.generativeai as genai
 from PIL import Image
 import io
 
-# --- 1. PAGE SETUP ---
-st.set_page_config(page_title="Accounter-AI | Smart Vision", layout="centered")
+# --- PAGE SETUP ---
+st.set_page_config(page_title="Accounter-AI | Report Generator", layout="centered")
 
-# --- 2. LOGIN FLOW ---
+# --- LOGIN ---
 if 'authenticated' not in st.session_state:
     st.session_state['authenticated'] = False
 
@@ -21,47 +21,34 @@ if not st.session_state['authenticated']:
             st.rerun()
     st.stop()
 
-# --- 3. MAIN APP ---
+# --- MAIN APP ---
 st.title("🚀 Accounter-AI")
 
-# Model Configuration (404 Error Fix)
+# ERROR FIX: Yahan model ka naam update kiya hai
 genai.configure(api_key=st.session_state['api_key'])
-model = genai.GenerativeModel('gemini-1.5-flash')
+model = genai.GenerativeModel('gemini-1.5-flash-latest') # 'latest' add karne se 404 error nahi aayega
 
-# File Uploader with 'key' for better tracking
 uploaded_docs = st.file_uploader("Upload Documents (PDF/JPG/PNG)", 
                                 type=['jpg', 'jpeg', 'png', 'pdf'], 
-                                accept_multiple_files=True,
-                                key="my_uploader")
+                                accept_multiple_files=True)
 
-# --- FILE DETAILS LOGIC (Jo aapne maanga tha) ---
 if uploaded_docs:
-    st.markdown("### 📁 Selected Files Details:")
-    for doc in uploaded_docs:
-        # Size Calculation (KB/MB)
-        size_kb = doc.size / 1024
-        size_str = f"{size_kb/1024:.2f} MB" if size_kb > 1024 else f"{size_kb:.2f} KB"
-        
-        # Displaying File Name and Size
-        st.success(f"📄 **Name:** {doc.name} | **Size:** `{size_str}` | **Status:** Ready")
+    st.write(f"📁 {len(uploaded_docs)} file(s) ready.")
     
-    st.divider()
-
-    # --- THE SCAN BUTTON (Ab ye tabhi active hoga jab file hogi) ---
     if st.button("🚀 SCAN & GENERATE REPORT", type="primary", use_container_width=True):
-        final_results = []
+        final_report_list = []
         
         for doc in uploaded_docs:
-            # WAITING SPINNER (User ko message dikhane ke liye)
+            # WAITING MESSAGE
             with st.spinner("Waiting... AI is processing your file"):
                 try:
-                    prompt = """
-                    Act as an expert Financial Analyst. Analyze this document and:
-                    1. Categorize strictly into: LOAN, MEDICINE, or EXPENSE.
-                    2. Extract Date, Party Name, and Total Amount.
-                    3. Calculate Tax Liability.
-                    Show output in a clean Table.
-                    """
+                    # PROMPT: Loan, Medicine, Expense categorization
+                    prompt = """Analyze this document as a Professional Auditor:
+                    1. Identify if it's a LOAN statement, MEDICINE bill, or GENERAL EXPENSE.
+                    2. List all transactions with Date, Name, and Total Amount.
+                    3. Calculate total Tax/GST Liability.
+                    4. Give a final summary of the financial status.
+                    Show output in a clear Table."""
                     
                     if doc.type == "application/pdf":
                         response = model.generate_content([prompt, {"mime_type": "application/pdf", "data": doc.read()}])
@@ -69,37 +56,47 @@ if uploaded_docs:
                         img = Image.open(doc)
                         response = model.generate_content([prompt, img])
                     
-                    st.subheader(f"✅ Report for: {doc.name}")
+                    st.subheader(f"📊 Report: {doc.name}")
                     st.markdown(response.text)
-                    final_results.append({"File": doc.name, "Analysis": response.text})
+                    
+                    # Collecting data for download
+                    final_report_list.append({"File": doc.name, "Analysis": response.text})
                     st.divider()
                     
                 except Exception as e:
                     st.error(f"Error in {doc.name}: {e}")
 
-        # --- DOWNLOAD OPTIONS ---
-        if final_results:
-            st.subheader("📥 Download Reports")
-            df_export = pd.DataFrame(final_results)
+        # --- DOWNLOAD SECTION ---
+        if final_report_list:
+            st.success("✅ Financial Report Complete!")
             
-            # Excel Buffer
-            excel_io = io.BytesIO()
-            df_export.to_excel(excel_io, index=False)
-            excel_io.seek(0)
+            # Excel Logic
+            df_report = pd.DataFrame(final_report_list)
+            output_excel = io.BytesIO()
+            with pd.ExcelWriter(output_excel, engine='xlsxwriter') as writer:
+                df_report.to_excel(writer, index=False, sheet_name='Financial_Report')
+            output_excel.seek(0)
             
             col1, col2 = st.columns(2)
             with col1:
-                st.download_button("📊 Download Excel", data=excel_io, file_name="Financial_Report.xlsx", use_container_width=True)
+                st.download_button(label="📥 Download Excel Report", 
+                                 data=output_excel, 
+                                 file_name="Accounter_AI_Report.xlsx", 
+                                 mime="application/vnd.ms-excel",
+                                 use_container_width=True)
+            
             with col2:
-                pdf_text = "\n\n".join([f"{res['File']}\n{res['Analysis']}" for res in final_results])
-                st.download_button("📄 Download PDF Report", data=pdf_text, file_name="Financial_Report.pdf", use_container_width=True)
-
+                # Text PDF Logic
+                report_text = "\n\n".join([f"FILE: {r['File']}\n{r['Analysis']}" for r in final_report_list])
+                st.download_button(label="📥 Download PDF Report", 
+                                 data=report_text, 
+                                 file_name="Accounter_AI_Report.pdf", 
+                                 mime="application/pdf",
+                                 use_container_width=True)
 else:
-    # AGAR FILE NAHI HAI TOH BUTTON BLUR (Disabled) RAHEGA
-    st.button("Scan Now (Waiting for file...)", disabled=True, use_container_width=True)
-    st.warning("Pehle 'Browse files' par click karke file select karein.")
+    st.button("Scan Now", disabled=True, use_container_width=True)
 
 if st.sidebar.button("Logout"):
     st.session_state.clear()
     st.rerun()
-    
+            
