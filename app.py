@@ -5,9 +5,9 @@ from PIL import Image
 import io
 
 # --- PAGE SETUP ---
-st.set_page_config(page_title="Accounter-AI | Financial Reports", layout="centered")
+st.set_page_config(page_title="Accounter-AI | Report Generator", layout="centered")
 
-# --- LOGIN SYSTEM ---
+# --- LOGIN ---
 if 'authenticated' not in st.session_state:
     st.session_state['authenticated'] = False
 
@@ -24,8 +24,9 @@ if not st.session_state['authenticated']:
 # --- MAIN APP ---
 st.title("🚀 Accounter-AI")
 
+# ERROR FIX: Yahan model ka naam update kiya hai
 genai.configure(api_key=st.session_state['api_key'])
-model = genai.GenerativeModel('gemini-1.5-flash')
+model = genai.GenerativeModel('gemini-1.5-flash-latest') # 'latest' add karne se 404 error nahi aayega
 
 uploaded_docs = st.file_uploader("Upload Documents (PDF/JPG/PNG)", 
                                 type=['jpg', 'jpeg', 'png', 'pdf'], 
@@ -35,19 +36,19 @@ if uploaded_docs:
     st.write(f"📁 {len(uploaded_docs)} file(s) ready.")
     
     if st.button("🚀 SCAN & GENERATE REPORT", type="primary", use_container_width=True):
-        all_results = []
+        final_report_list = []
         
         for doc in uploaded_docs:
+            # WAITING MESSAGE
             with st.spinner("Waiting... AI is processing your file"):
                 try:
-                    prompt = """
-                    Act as a Senior Financial Consultant. Analyze this document:
-                    1. List all transactions.
-                    2. Categorize each into: LOAN, MEDICINE, or EXPENSE.
-                    3. Extract Date, Party Name, GST, and Total Amount.
-                    4. Calculate Total Tax Liability.
-                    Show result in a clear Table.
-                    """
+                    # PROMPT: Loan, Medicine, Expense categorization
+                    prompt = """Analyze this document as a Professional Auditor:
+                    1. Identify if it's a LOAN statement, MEDICINE bill, or GENERAL EXPENSE.
+                    2. List all transactions with Date, Name, and Total Amount.
+                    3. Calculate total Tax/GST Liability.
+                    4. Give a final summary of the financial status.
+                    Show output in a clear Table."""
                     
                     if doc.type == "application/pdf":
                         response = model.generate_content([prompt, {"mime_type": "application/pdf", "data": doc.read()}])
@@ -55,50 +56,47 @@ if uploaded_docs:
                         img = Image.open(doc)
                         response = model.generate_content([prompt, img])
                     
-                    st.subheader(f"✅ Financial Report: {doc.name}")
+                    st.subheader(f"📊 Report: {doc.name}")
                     st.markdown(response.text)
                     
-                    # Data for Export (Simulated)
-                    all_results.append({"File": doc.name, "Analysis": response.text})
+                    # Collecting data for download
+                    final_report_list.append({"File": doc.name, "Analysis": response.text})
                     st.divider()
                     
                 except Exception as e:
-                    st.error(f"Error: {e}")
+                    st.error(f"Error in {doc.name}: {e}")
 
-        # --- DOWNLOAD OPTIONS ---
-        if all_results:
-            st.subheader("📥 Download Your Report")
+        # --- DOWNLOAD SECTION ---
+        if final_report_list:
+            st.success("✅ Financial Report Complete!")
+            
+            # Excel Logic
+            df_report = pd.DataFrame(final_report_list)
+            output_excel = io.BytesIO()
+            with pd.ExcelWriter(output_excel, engine='xlsxwriter') as writer:
+                df_report.to_excel(writer, index=False, sheet_name='Financial_Report')
+            output_excel.seek(0)
+            
             col1, col2 = st.columns(2)
-            
-            # Excel Export
-            df = pd.DataFrame(all_results)
-            excel_data = io.BytesIO()
-            df.to_excel(excel_data, index=False)
-            excel_data.seek(0)
-            
             with col1:
-                st.download_button(
-                    label="📊 Download Excel",
-                    data=excel_data,
-                    file_name="Financial_Report.xlsx",
-                    mime="application/vnd.ms-excel",
-                    use_container_width=True
-                )
+                st.download_button(label="📥 Download Excel Report", 
+                                 data=output_excel, 
+                                 file_name="Accounter_AI_Report.xlsx", 
+                                 mime="application/vnd.ms-excel",
+                                 use_container_width=True)
             
             with col2:
-                # PDF Placeholder (Text based)
-                pdf_data = "\n".join([f"{res['File']}\n{res['Analysis']}" for res in all_results])
-                st.download_button(
-                    label="📄 Download PDF",
-                    data=pdf_data,
-                    file_name="Financial_Report.pdf",
-                    mime="application/pdf",
-                    use_container_width=True
-                )
+                # Text PDF Logic
+                report_text = "\n\n".join([f"FILE: {r['File']}\n{r['Analysis']}" for r in final_report_list])
+                st.download_button(label="📥 Download PDF Report", 
+                                 data=report_text, 
+                                 file_name="Accounter_AI_Report.pdf", 
+                                 mime="application/pdf",
+                                 use_container_width=True)
 else:
     st.button("Scan Now", disabled=True, use_container_width=True)
 
 if st.sidebar.button("Logout"):
     st.session_state.clear()
     st.rerun()
-    
+        
