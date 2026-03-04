@@ -1,5 +1,6 @@
 streamlit
-pandas
 google-generativeai
-Pillow
-openpyxl
+PyPDF2
+fpdf
+xlsxwriter
+pandas
