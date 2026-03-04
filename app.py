@@ -4,10 +4,10 @@ import google.generativeai as genai
 from PIL import Image
 import io
 
-# --- PAGE SETUP ---
-st.set_page_config(page_title="Accounter-AI | Report Generator", layout="centered")
+# --- 1. PAGE SETUP ---
+st.set_page_config(page_title="Accounter-AI", layout="centered")
 
-# --- LOGIN ---
+# --- 2. LOGIN FLOW ---
 if 'authenticated' not in st.session_state:
     st.session_state['authenticated'] = False
 
@@ -21,34 +21,40 @@ if not st.session_state['authenticated']:
             st.rerun()
     st.stop()
 
-# --- MAIN APP ---
+# --- 3. MAIN APP ---
 st.title("🚀 Accounter-AI")
 
-# ERROR FIX: Yahan model ka naam update kiya hai
-genai.configure(api_key=st.session_state['api_key'])
-model = genai.GenerativeModel('gemini-1.5-flash-latest') # 'latest' add karne se 404 error nahi aayega
+# ERROR FIX: Yahan model name ko ekdum correct kiya hai taaki 404 error na aaye
+try:
+    genai.configure(api_key=st.session_state['api_key'])
+    # Free Tier ke liye ye model sabse best hai
+    model = genai.GenerativeModel('gemini-1.5-flash') 
+except Exception as e:
+    st.error(f"Configuration Error: {e}")
 
+# File Uploader: Naam aur Size dikhayega
 uploaded_docs = st.file_uploader("Upload Documents (PDF/JPG/PNG)", 
                                 type=['jpg', 'jpeg', 'png', 'pdf'], 
                                 accept_multiple_files=True)
 
 if uploaded_docs:
-    st.write(f"📁 {len(uploaded_docs)} file(s) ready.")
+    st.info(f"📁 {len(uploaded_docs)} file(s) ready for analysis.")
     
+    # SCAN BUTTON
     if st.button("🚀 SCAN & GENERATE REPORT", type="primary", use_container_width=True):
-        final_report_list = []
+        final_results = []
         
         for doc in uploaded_docs:
-            # WAITING MESSAGE
+            # --- ONLY WAITING MESSAGE ---
             with st.spinner("Waiting... AI is processing your file"):
                 try:
-                    # PROMPT: Loan, Medicine, Expense categorization
-                    prompt = """Analyze this document as a Professional Auditor:
-                    1. Identify if it's a LOAN statement, MEDICINE bill, or GENERAL EXPENSE.
-                    2. List all transactions with Date, Name, and Total Amount.
-                    3. Calculate total Tax/GST Liability.
-                    4. Give a final summary of the financial status.
-                    Show output in a clear Table."""
+                    # AI ko instructions: Loan, Expense, Medicine ko alag kare
+                    prompt = """Analyze this document as a Financial Auditor. 
+                    1. Categorize strictly as: LOAN, MEDICINE, or EXPENSE.
+                    2. Extract Date, Party Name, and Total Amount.
+                    3. Calculate Tax Liability.
+                    4. Give a summary of the financial impact.
+                    Show the output in a clean Table."""
                     
                     if doc.type == "application/pdf":
                         response = model.generate_content([prompt, {"mime_type": "application/pdf", "data": doc.read()}])
@@ -56,47 +62,48 @@ if uploaded_docs:
                         img = Image.open(doc)
                         response = model.generate_content([prompt, img])
                     
-                    st.subheader(f"📊 Report: {doc.name}")
+                    # Screen par result
+                    st.subheader(f"✅ Report: {doc.name}")
                     st.markdown(response.text)
                     
-                    # Collecting data for download
-                    final_report_list.append({"File": doc.name, "Analysis": response.text})
+                    # Data collect for Excel
+                    final_results.append({"File": doc.name, "Analysis": response.text})
                     st.divider()
                     
                 except Exception as e:
-                    st.error(f"Error in {doc.name}: {e}")
+                    st.error(f"Error processing {doc.name}: {e}. Try refreshing your API key.")
 
-        # --- DOWNLOAD SECTION ---
-        if final_report_list:
-            st.success("✅ Financial Report Complete!")
-            
-            # Excel Logic
-            df_report = pd.DataFrame(final_report_list)
-            output_excel = io.BytesIO()
-            with pd.ExcelWriter(output_excel, engine='xlsxwriter') as writer:
-                df_report.to_excel(writer, index=False, sheet_name='Financial_Report')
-            output_excel.seek(0)
-            
+        # --- DOWNLOAD SECTION (EXCEL & PDF) ---
+        if final_results:
+            st.success("Analysis Complete!")
             col1, col2 = st.columns(2)
+            
+            # Excel Generator
+            df_final = pd.DataFrame(final_results)
+            excel_buffer = io.BytesIO()
+            df_final.to_excel(excel_buffer, index=False)
+            excel_buffer.seek(0)
+            
             with col1:
                 st.download_button(label="📥 Download Excel Report", 
-                                 data=output_excel, 
-                                 file_name="Accounter_AI_Report.xlsx", 
+                                 data=excel_buffer, 
+                                 file_name="Financial_Report.xlsx", 
                                  mime="application/vnd.ms-excel",
                                  use_container_width=True)
             
             with col2:
-                # Text PDF Logic
-                report_text = "\n\n".join([f"FILE: {r['File']}\n{r['Analysis']}" for r in final_report_list])
+                # Text based PDF content
+                pdf_content = "\n\n".join([f"FILE: {r['File']}\n{r['Analysis']}" for r in final_results])
                 st.download_button(label="📥 Download PDF Report", 
-                                 data=report_text, 
-                                 file_name="Accounter_AI_Report.pdf", 
+                                 data=pdf_content, 
+                                 file_name="Financial_Report.pdf", 
                                  mime="application/pdf",
                                  use_container_width=True)
 else:
+    # Button blur rahega jab tak file na ho
     st.button("Scan Now", disabled=True, use_container_width=True)
 
 if st.sidebar.button("Logout"):
     st.session_state.clear()
     st.rerun()
-        
+    
