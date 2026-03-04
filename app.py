@@ -4,8 +4,7 @@ import google.generativeai as genai
 import io
 from PyPDF2 import PdfReader
 
-# --- 1. APP CONFIG ---
-st.set_page_config(page_title="Accounter-AI | Professional", layout="wide")
+st.set_page_config(page_title="Accounter-AI | Pro", layout="wide")
 
 if 'api_key' not in st.session_state:
     st.title("🔐 Secure Audit Login")
@@ -15,51 +14,33 @@ if 'api_key' not in st.session_state:
         st.rerun()
     st.stop()
 
-# --- 2. FORCING STABLE VERSION ---
+# --- FORCING STABLE CONNECTION ---
 try:
-    # Yahan hum version="v1" force kar rahe hain taaki 404 error na aaye
+    # 'rest' transport v1beta error ko khatam kar deta hai
     genai.configure(api_key=st.session_state['api_key'], transport='rest')
-    model = genai.GenerativeModel(model_name='gemini-1.5-flash') 
+    model = genai.GenerativeModel('gemini-1.5-flash')
 except Exception as e:
     st.error(f"Setup Error: {e}")
 
-# --- 3. MAIN INTERFACE ---
 st.title("🚀 Accounter-AI: Enterprise Auditor")
 
-uploaded_file = st.file_uploader("Upload Bank Statement (PDF)", type=['pdf'])
+uploaded_file = st.file_uploader("Upload PDF Statement", type=['pdf'])
 
 if uploaded_file:
     if st.button("📊 EXECUTE AUDIT", type="primary", use_container_width=True):
-        with st.spinner("Step 1: Extracting Data..."):
+        with st.spinner("Processing..."):
             reader = PdfReader(uploaded_file)
             raw_text = "".join([p.extract_text() or "" for p in reader.pages])
             
-            if not raw_text.strip():
-                st.error("Text not found in PDF.")
-                st.stop()
-
-        with st.spinner("Step 2: AI Analyzing..."):
-            # Simple Prompt to avoid data loss
-            prompt = f"Extract all bank transactions as a CSV table (Date, Description, Type, Amount) from this text: {raw_text[:20000]}"
-            
             try:
-                # API Call
-                response = model.generate_content(prompt)
-                
+                # Direct prompt for stable output
+                response = model.generate_content(f"Extract transactions as CSV: {raw_text[:20000]}")
                 if response and response.text:
                     st.success("Audit Complete!")
-                    csv_raw = response.text.replace('```csv', '').replace('```', '').strip()
-                    
-                    if "Date" in csv_raw:
-                        df = pd.read_csv(io.StringIO(csv_raw[csv_raw.find("Date"):]), on_bad_lines='skip')
-                        st.dataframe(df, use_container_width=True)
-                    else:
-                        st.warning("AI couldn't format CSV. Raw text shown below:")
-                        st.text(response.text)
+                    csv_clean = response.text.replace('```csv', '').replace('```', '').strip()
+                    df = pd.read_csv(io.StringIO(csv_clean[csv_clean.find("Date"):]), on_bad_lines='skip')
+                    st.dataframe(df, use_container_width=True)
                 else:
-                    st.error("No response from AI. Please check your API key quota.")
-                    
+                    st.error("No data returned from AI.")
             except Exception as e:
-                # Yahan humein asli wajah pata chalegi agar 404 aata hai
                 st.error(f"System Error: {e}")
-                st.info("Tip: If error persists, delete this app from Streamlit and deploy it as a 'New App'.")
