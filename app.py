@@ -2,85 +2,103 @@ import streamlit as st
 import pandas as pd
 import google.generativeai as genai
 from PIL import Image
+import io
 
 # --- PAGE SETUP ---
-st.set_page_config(page_title="Accounter-AI", layout="centered")
+st.set_page_config(page_title="Accounter-AI | Financial Reports", layout="centered")
 
-# --- 1. LOGIN SCREEN (API KEY) ---
+# --- LOGIN SYSTEM ---
 if 'authenticated' not in st.session_state:
     st.session_state['authenticated'] = False
 
 if not st.session_state['authenticated']:
     st.title("🔐 Accounter-AI Login")
-    api_key_input = st.text_input("Enter your Gemini API Key to access:", type="password")
+    api_key_input = st.text_input("Enter Gemini API Key:", type="password")
     if st.button("Login"):
         if api_key_input:
             st.session_state['api_key'] = api_key_input
             st.session_state['authenticated'] = True
             st.rerun()
-        else:
-            st.error("Please enter a valid key.")
-    st.stop() # App yahan ruk jayegi jab tak login na ho
+    st.stop()
 
-# --- 2. MAIN APP INTERFACE (Login ke baad) ---
+# --- MAIN APP ---
 st.title("🚀 Accounter-AI")
 
-# API Setup
 genai.configure(api_key=st.session_state['api_key'])
 model = genai.GenerativeModel('gemini-1.5-flash')
 
-# Tabs for organization
-tab1, tab2 = st.tabs(["📄 Document Scanner", "📊 Statement Analyst"])
+uploaded_docs = st.file_uploader("Upload Documents (PDF/JPG/PNG)", 
+                                type=['jpg', 'jpeg', 'png', 'pdf'], 
+                                accept_multiple_files=True)
 
-with tab1:
-    # Multiple files select karne ka option
-    uploaded_docs = st.file_uploader("Upload Files (JPG, PNG, PDF)", 
-                                    type=['jpg', 'jpeg', 'png', 'pdf'], 
-                                    accept_multiple_files=True)
+if uploaded_docs:
+    st.write(f"📁 {len(uploaded_docs)} file(s) ready.")
     
-    if uploaded_docs:
-        # File counter
-        st.info(f"📁 {len(uploaded_docs)} File(s) selected. You can add more.")
+    if st.button("🚀 SCAN & GENERATE REPORT", type="primary", use_container_width=True):
+        all_results = []
         
-        # 3. SUBMIT BUTTON
-        if st.button("Submit & Scan Now"):
-            for doc in uploaded_docs:
-                with st.spinner(f"Processing {doc.name}..."):
-                    try:
-                        prompt = "Extract Date, Vendor, GSTIN, Total, and Tally Ledger Group into a table."
-                        if doc.type == "application/pdf":
-                            response = model.generate_content([prompt, {"mime_type": "application/pdf", "data": doc.read()}])
-                        else:
-                            img = Image.open(doc)
-                            response = model.generate_content([prompt, img])
-                        
-                        st.subheader(f"Results: {doc.name}")
-                        st.markdown(response.text)
-                        st.divider()
-                    except Exception as e:
-                        st.error(f"Error in {doc.name}: {e}")
-
-with tab2:
-    uploaded_statement = st.file_uploader("Upload Bank Statement (Excel/CSV)", type=['csv', 'xlsx'])
-    
-    if uploaded_statement:
-        st.success(f"✅ {uploaded_statement.name} ready for analysis.")
-        
-        if st.button("Submit Statement"):
-            with st.spinner("Analyzing..."):
-                df = pd.read_csv(uploaded_statement) if uploaded_statement.name.endswith('.csv') else pd.read_excel(uploaded_statement)
-                st.write("Data Summary:")
-                st.dataframe(df.head(10))
-                # Logic to check 1Cr limit
-                amount_col = next((c for c in df.columns if 'amount' in c.lower() or 'total' in c.lower()), None)
-                if amount_col:
-                    total = pd.to_numeric(df[amount_col], errors='coerce').sum()
-                    if total > 10000000:
-                        st.error(f"🚨 ALERT: Turnover ₹{total:,.2f} exceeds 1 Crore. Audit Required!")
+        for doc in uploaded_docs:
+            with st.spinner("Waiting... AI is processing your file"):
+                try:
+                    prompt = """
+                    Act as a Senior Financial Consultant. Analyze this document:
+                    1. List all transactions.
+                    2. Categorize each into: LOAN, MEDICINE, or EXPENSE.
+                    3. Extract Date, Party Name, GST, and Total Amount.
+                    4. Calculate Total Tax Liability.
+                    Show result in a clear Table.
+                    """
+                    
+                    if doc.type == "application/pdf":
+                        response = model.generate_content([prompt, {"mime_type": "application/pdf", "data": doc.read()}])
                     else:
-                        st.success(f"Turnover: ₹{total:,.2f} (Under Limit)")
+                        img = Image.open(doc)
+                        response = model.generate_content([prompt, img])
+                    
+                    st.subheader(f"✅ Financial Report: {doc.name}")
+                    st.markdown(response.text)
+                    
+                    # Data for Export (Simulated)
+                    all_results.append({"File": doc.name, "Analysis": response.text})
+                    st.divider()
+                    
+                except Exception as e:
+                    st.error(f"Error: {e}")
 
-# Logout option
-if st.sidebar.button("Logout / Change Key"):
-    st.session_state['authenticated'] = False
+        # --- DOWNLOAD OPTIONS ---
+        if all_results:
+            st.subheader("📥 Download Your Report")
+            col1, col2 = st.columns(2)
+            
+            # Excel Export
+            df = pd.DataFrame(all_results)
+            excel_data = io.BytesIO()
+            df.to_excel(excel_data, index=False)
+            excel_data.seek(0)
+            
+            with col1:
+                st.download_button(
+                    label="📊 Download Excel",
+                    data=excel_data,
+                    file_name="Financial_Report.xlsx",
+                    mime="application/vnd.ms-excel",
+                    use_container_width=True
+                )
+            
+            with col2:
+                # PDF Placeholder (Text based)
+                pdf_data = "\n".join([f"{res['File']}\n{res['Analysis']}" for res in all_results])
+                st.download_button(
+                    label="📄 Download PDF",
+                    data=pdf_data,
+                    file_name="Financial_Report.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
+else:
+    st.button("Scan Now", disabled=True, use_container_width=True)
+
+if st.sidebar.button("Logout"):
+    st.session_state.clear()
     st.rerun()
+    
