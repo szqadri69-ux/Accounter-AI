@@ -106,4 +106,3 @@ else:
 if st.sidebar.button("Log Out"):
     st.session_state.clear()
     st.rerun()
-                        
