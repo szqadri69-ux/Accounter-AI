@@ -84,4 +84,3 @@ with tab2:
 if st.sidebar.button("Logout / Change Key"):
     st.session_state['authenticated'] = False
     st.rerun()
-
