@@ -4,55 +4,83 @@ import google.generativeai as genai
 import io
 from PyPDF2 import PdfReader
 
-st.set_page_config(page_title="Accounter-AI", layout="wide")
+st.set_page_config(page_title="Accounter-AI | High Precision", layout="wide")
 
 if 'api_key' not in st.session_state:
-    st.title("🔐 Login")
-    api_key_input = st.text_input("Enter API Key:", type="password")
-    if st.button("Connect"):
+    st.title("🔐 Accounter-AI Login")
+    api_key_input = st.text_input("Enter Gemini API Key:", type="password")
+    if st.button("Login"):
         st.session_state['api_key'] = api_key_input
         st.rerun()
     st.stop()
 
-try:
-    genai.configure(api_key=st.session_state['api_key'], transport='rest')
-    model = genai.GenerativeModel('gemini-1.5-flash')
-except Exception as e:
-    st.error(f"Setup Error: {e}")
+# --- STABLE CONFIG ---
+# transport='rest' ensures your new key works without 404 errors
+genai.configure(api_key=st.session_state['api_key'], transport='rest')
+model = genai.GenerativeModel('gemini-1.5-flash')
 
-st.title("🚀 Accounter-AI")
+def extract_transactions(pdf_bytes):
+    try:
+        prompt = """
+        ACT AS A PROFESSIONAL AUDITOR. 
+        Extract EVERY transaction from this document. 
+        Return ONLY a CSV table with headers: Date, Description, Type, Amount.
+        Important: Type must be exactly 'Debit' or 'Credit'.
+        Clean 'Amount' - Numbers only, no ₹ or commas.
+        """
+        response = model.generate_content([prompt, {"mime_type": "application/pdf", "data": pdf_bytes}])
+        return response.text
+    except Exception as e:
+        return f"Error: {str(e)}"
 
-uploaded_file = st.file_uploader("Upload PDF Statement", type=['pdf'])
+st.title("🚀 Accounter-AI: High Precision Mode")
+
+uploaded_file = st.file_uploader("Upload Bank Statement", type=['pdf'])
 
 if uploaded_file:
-    if st.button("EXECUTE AUDIT", type="primary", use_container_width=True):
-        with st.spinner("Processing..."):
-            reader = PdfReader(uploaded_file)
-            raw_text = "".join([p.extract_text() or "" for p in reader.pages])
+    if st.button("📊 START DEEP CALCULATION", type="primary", use_container_width=True):
+        with st.spinner("AI is reading and calculating..."):
+            raw_data = extract_transactions(uploaded_file.getvalue())
             
-            try:
-                prompt = f"Extract bank transactions as CSV (Date, Description, Type, Amount). Only return CSV data: {raw_text[:20000]}"
-                response = model.generate_content(prompt)
-                
-                if response and response.text:
-                    st.success("Audit Complete!")
-                    csv_data = response.text.replace('```csv', '').replace('```', '').strip()
+            if "Error" in raw_data or not raw_data:
+                st.error("AI couldn't find transactions.")
+            else:
+                try:
+                    # Clean AI response
+                    csv_start = raw_data.find("Date")
+                    clean_csv = raw_data[csv_start:].replace('```csv', '').replace('```', '').strip()
                     
-                    if "Date" in csv_data:
-                        df = pd.read_csv(io.StringIO(csv_data[csv_data.find("Date"):]), on_bad_lines='skip')
-                        st.dataframe(df, use_container_width=True)
-                        
-                        buf = io.BytesIO()
-                        df.to_excel(buf, index=False)
-                        st.download_button(
-                            label="📥 Download Excel Report",
-                            data=buf.getvalue(),
-                            file_name="Audit_Report.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
-                    else:
-                        st.error("Format Error. Please try again.")
-                else:
-                    st.error("No response from AI.")
-            except Exception as e:
-                st.error(f"Error: {e}")
+                    df = pd.read_csv(io.StringIO(clean_csv), on_bad_lines='skip')
+                    
+                    # 1. Clean Column Names (Removes hidden spaces)
+                    df.columns = df.columns.str.strip()
+                    
+                    # 2. Clean 'Amount' column
+                    df['Amount'] = pd.to_numeric(df['Amount'].astype(str).str.replace('[^0-9.]', '', regex=True), errors='coerce').fillna(0)
+                    
+                    # 3. Clean 'Type' column (Critical fix for Zero Calculation)
+                    df['Type'] = df['Type'].astype(str).str.strip().str.capitalize()
+                    
+                    # 4. Filter and Calculate
+                    df = df[df['Amount'] > 0]
+                    total_debit = df[df['Type'] == 'Debit']['Amount'].sum()
+                    total_credit = df[df['Type'] == 'Credit']['Amount'].sum()
+                    
+                    st.success(f"Calculated {len(df)} transactions!")
+                    
+                    # Results Display
+                    c1, c2 = st.columns(2)
+                    c1.metric("Total Expenses (Debit)", f"₹{total_debit:,.2f}")
+                    c2.metric("Total Income (Credit)", f"₹{total_credit:,.2f}")
+                    
+                    st.dataframe(df, use_container_width=True)
+                    
+                    # Excel Download
+                    excel_io = io.BytesIO()
+                    df.to_excel(excel_io, index=False)
+                    st.download_button("📥 Download Excel Report", data=excel_io.getvalue(), file_name="Audit_Report.xlsx")
+                    
+                except Exception as e:
+                    st.error(f"Formatting error: {e}")
+                    st.text(raw_data)
+                    
