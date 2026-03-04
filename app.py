@@ -4,10 +4,10 @@ import google.generativeai as genai
 from PIL import Image
 import io
 
-# --- PAGE SETUP ---
-st.set_page_config(page_title="Accounter-AI | Report Generator", layout="centered")
+# --- 1. PAGE SETUP ---
+st.set_page_config(page_title="Accounter-AI | Fast Scan", layout="centered")
 
-# --- LOGIN ---
+# --- 2. LOGIN ---
 if 'authenticated' not in st.session_state:
     st.session_state['authenticated'] = False
 
@@ -21,80 +21,69 @@ if not st.session_state['authenticated']:
             st.rerun()
     st.stop()
 
-# --- MAIN APP ---
+# --- 3. MAIN APP ---
 st.title("🚀 Accounter-AI")
 
-# ERROR FIX: Yahan model ka naam update kiya hai
+# Fast Model Config
 genai.configure(api_key=st.session_state['api_key'])
-model = genai.GenerativeModel('gemini-1.5-flash-latest') # 'latest' add karne se 404 error nahi aayega
+model = genai.GenerativeModel('gemini-1.5-flash')
 
+# File Uploader
 uploaded_docs = st.file_uploader("Upload Documents (PDF/JPG/PNG)", 
                                 type=['jpg', 'jpeg', 'png', 'pdf'], 
                                 accept_multiple_files=True)
 
 if uploaded_docs:
-    st.write(f"📁 {len(uploaded_docs)} file(s) ready.")
+    st.markdown("### 📁 File Details (Uploaded):")
+    for doc in uploaded_docs:
+        size_str = f"{doc.size/1024:.2f} KB" if doc.size < 1048576 else f"{doc.size/(1024*1024):.2f} MB"
+        # Naam aur Size yahan saaf dikhega
+        st.success(f"📄 **Name:** {doc.name} | **Size:** {size_str}")
     
+    st.divider()
+
+    # SCAN BUTTON
     if st.button("🚀 SCAN & GENERATE REPORT", type="primary", use_container_width=True):
         final_report_list = []
         
         for doc in uploaded_docs:
-            # WAITING MESSAGE
+            # Spinner for feedback
             with st.spinner("Waiting... AI is processing your file"):
                 try:
-                    # PROMPT: Loan, Medicine, Expense categorization
-                    prompt = """Analyze this document as a Professional Auditor:
-                    1. Identify if it's a LOAN statement, MEDICINE bill, or GENERAL EXPENSE.
-                    2. List all transactions with Date, Name, and Total Amount.
-                    3. Calculate total Tax/GST Liability.
-                    4. Give a final summary of the financial status.
-                    Show output in a clear Table."""
+                    prompt = """Analyze this document:
+                    1. Categorize as: LOAN, MEDICINE, or EXPENSE.
+                    2. List Date, Party Name, and Total Amount.
+                    3. Calculate Tax/GST.
+                    Show result in a Table."""
                     
+                    # Optimized Processing
                     if doc.type == "application/pdf":
-                        response = model.generate_content([prompt, {"mime_type": "application/pdf", "data": doc.read()}])
+                        pdf_parts = [{"mime_type": "application/pdf", "data": doc.getvalue()}]
+                        response = model.generate_content([prompt, pdf_parts[0]])
                     else:
                         img = Image.open(doc)
                         response = model.generate_content([prompt, img])
                     
+                    # Instant Result Display
                     st.subheader(f"📊 Report: {doc.name}")
                     st.markdown(response.text)
-                    
-                    # Collecting data for download
                     final_report_list.append({"File": doc.name, "Analysis": response.text})
                     st.divider()
                     
                 except Exception as e:
-                    st.error(f"Error in {doc.name}: {e}")
+                    st.error(f"Error: {e}. Please check your internet or API Key.")
 
-        # --- DOWNLOAD SECTION ---
+        # --- EXPORT SECTION ---
         if final_report_list:
-            st.success("✅ Financial Report Complete!")
-            
-            # Excel Logic
             df_report = pd.DataFrame(final_report_list)
             output_excel = io.BytesIO()
-            with pd.ExcelWriter(output_excel, engine='xlsxwriter') as writer:
-                df_report.to_excel(writer, index=False, sheet_name='Financial_Report')
+            df_report.to_excel(output_excel, index=False)
             output_excel.seek(0)
             
-            col1, col2 = st.columns(2)
-            with col1:
-                st.download_button(label="📥 Download Excel Report", 
-                                 data=output_excel, 
-                                 file_name="Accounter_AI_Report.xlsx", 
-                                 mime="application/vnd.ms-excel",
-                                 use_container_width=True)
-            
-            with col2:
-                # Text PDF Logic
-                report_text = "\n\n".join([f"FILE: {r['File']}\n{r['Analysis']}" for r in final_report_list])
-                st.download_button(label="📥 Download PDF Report", 
-                                 data=report_text, 
-                                 file_name="Accounter_AI_Report.pdf", 
-                                 mime="application/pdf",
-                                 use_container_width=True)
+            st.download_button("📥 Download Excel Report", data=output_excel, file_name="Financial_Report.xlsx", use_container_width=True)
 else:
-    st.button("Scan Now", disabled=True, use_container_width=True)
+    # Button Disabled when no file
+    st.button("Scan Now (Waiting for file...)", disabled=True, use_container_width=True)
 
 if st.sidebar.button("Logout"):
     st.session_state.clear()
