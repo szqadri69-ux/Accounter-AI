@@ -1,136 +1,121 @@
 import streamlit as st
 import pandas as pd
 import google.generativeai as genai
-from PIL import Image
 import io
-import concurrent.futures
-import time
-from PyPDF2 import PdfReader, PdfWriter
+from PyPDF2 import PdfReader
 from fpdf import FPDF
 
-# --- 1. PAGE SETUP ---
-st.set_page_config(page_title="Accounter-AI | Pro Audit", layout="wide")
+# --- CONFIG ---
+st.set_page_config(page_title="Accounter-AI | High Density Mode", layout="wide")
 
-if 'authenticated' not in st.session_state:
-    st.session_state['authenticated'] = False
-
-if not st.session_state['authenticated']:
-    st.title("🔐 Accounter-AI Login")
+if 'api_key' not in st.session_state:
+    st.title("🔐 Login")
     api_key_input = st.text_input("Enter Gemini API Key:", type="password")
     if st.button("Login"):
-        if api_key_input:
-            st.session_state['api_key'] = api_key_input
-            st.session_state['authenticated'] = True
-            st.rerun()
+        st.session_state['api_key'] = api_key_input
+        st.rerun()
     st.stop()
 
-# --- 2. AI CONFIG ---
 genai.configure(api_key=st.session_state['api_key'])
 model = genai.GenerativeModel('gemini-1.5-flash')
 
-def process_chunk_ca(pdf_bytes, chunk_id):
-    try:
-        # Improved Prompt for better extraction from UPI Statements
-        prompt = """
-        ACT AS A SENIOR AUDITOR. Extract EVERY transaction from this statement.
-        Output ONLY in this CSV format:
-        Date,Description,Category,Type,Amount
-        
-        Rules:
-        1. Date should be in DD/MM/YYYY.
-        2. Type must be exactly 'Debit' or 'Credit'.
-        3. Amount must be a clean number (no symbols like ₹ or commas).
-        4. Category should be: LOAN, MEDICINE, TRAVEL, FOOD, or GENERAL.
-        5. If a transaction is split across lines, merge it.
-        """
-        response = model.generate_content([prompt, {"mime_type": "application/pdf", "data": pdf_bytes}])
-        return response.text if (response.text and "," in response.text) else ""
-    except:
-        return ""
+# --- 1. LOCAL TEXT EXTRACTION (ROW-BY-ROW) ---
+def get_pdf_text_structured(uploaded_file):
+    reader = PdfReader(uploaded_file)
+    structured_text = ""
+    for i, page in enumerate(reader.pages):
+        # Adding Page markers so AI doesn't mix data between pages
+        structured_text += f"\n--- PAGE {i+1} START ---\n"
+        structured_text += page.extract_text()
+        structured_text += f"\n--- PAGE {i+1} END ---\n"
+    return structured_text
 
-def generate_pdf_report(df, summary):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", 'B', 16)
-    pdf.cell(200, 10, txt="Financial Audit Summary Report", ln=True, align='C')
-    pdf.ln(10)
-    pdf.set_font("Arial", size=12)
-    pdf.cell(200, 10, txt=f"Total Entries: {summary['total_rows']}", ln=True)
-    pdf.cell(200, 10, txt=f"Total Expenses (Debit): {summary['debit']:.2f}", ln=True)
-    pdf.cell(200, 10, txt=f"Total Income (Credit): {summary['credit']:.2f}", ln=True)
-    pdf.cell(200, 10, txt=f"Final Net Balance: {summary['net']:.2f}", ln=True)
-    return pdf.output(dest='S').encode('latin-1')
+# --- 2. MAIN UI ---
+st.title("🚀 Accounter-AI: Pro Financial Auditor")
+st.warning("Row-by-Row Mode Active: Har transaction ko scan karke tally kiya jayega.")
 
-# --- 3. MAIN UI ---
-st.title("🚀 Accounter-AI: Pro Financial Reporter")
-
-uploaded_file = st.file_uploader("Upload 60-Page Statement", type=['pdf'])
+uploaded_file = st.file_uploader("Upload Full Statement (PDF)", type=['pdf'])
 
 if uploaded_file:
-    if st.button("⚡ GENERATE COMPLETE AUDIT REPORT", type="primary", use_container_width=True):
-        reader = PdfReader(uploaded_file)
-        total_pages = len(reader.pages)
-        
-        # 3-page chunks for precision
-        chunks = []
-        for i in range(0, total_pages, 3):
-            writer = PdfWriter()
-            for p in range(i, min(i + 3, total_pages)):
-                writer.add_page(reader.pages[p])
-            chunk_io = io.BytesIO()
-            writer.write(chunk_io)
-            chunks.append(chunk_io.getvalue())
-
-        progress = st.progress(0)
-        status = st.empty()
-        combined_csv = "Date,Description,Category,Type,Amount\n"
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
-            futures = [executor.submit(process_chunk_ca, c, i) for i, c in enumerate(chunks)]
-            for i, f in enumerate(concurrent.futures.as_completed(futures)):
-                res = f.result()
-                # Filtering out noise
-                lines = [l.strip() for l in res.split('\n') if ',' in l and 'Date' not in l.lower()]
-                combined_csv += "\n".join(lines) + "\n"
-                progress.progress((i + 1) / len(chunks))
-                status.text(f"Scanning Batch {i+1}/{len(chunks)}...")
-
-        try:
-            # Load and clean data
-            df = pd.read_csv(io.StringIO(combined_csv), on_bad_lines='skip')
-            df['Amount'] = pd.to_numeric(df['Amount'].astype(str).str.replace('[^0-9.]', '', regex=True), errors='coerce').fillna(0)
+    if st.button("📊 EXECUTE FULL AUDIT"):
+        with st.spinner("Extracting text from PDF..."):
+            raw_text = get_pdf_text_structured(uploaded_file)
             
-            # Remove empty rows
-            df = df[df['Amount'] > 0]
-            df.insert(0, 'Sr. No.', range(1, 1 + len(df)))
+            if len(raw_text.strip()) < 50:
+                st.error("Text extract nahi ho paya. Shayad ye scan copy hai. Image Scan ki zaroorat hai.")
+                st.stop()
 
-            # Summary Calcs
-            total_debit = df[df['Type'].str.contains('Debit', case=False, na=False)]['Amount'].sum()
-            total_credit = df[df['Type'].str.contains('Credit', case=False, na=False)]['Amount'].sum()
+        with st.spinner("AI is processing row-by-row..."):
+            # Strict prompt to ensure AI returns one row per transaction
+            prompt = f"""
+            ACT AS A SENIOR BANK AUDITOR. 
+            I am giving you text data from a bank statement with page markers.
             
-            summary_stats = {'total_rows': len(df), 'credit': total_credit, 'debit': total_debit, 'net': total_credit - total_debit}
+            YOUR TASK: 
+            Extract EVERY single transaction line. 
+            Do NOT summarize. Do NOT skip any row.
+            
+            Return ONLY a CSV format with these 5 columns:
+            Date, Description, Category, Type, Amount
+            
+            Rules:
+            1. 'Type' must be 'Debit' or 'Credit'.
+            2. 'Amount' must be numbers only (No symbols).
+            3. If a row is unclear, still extract it and put 'CHECK' in category.
+            
+            DATA:
+            {raw_text[:30000]}
+            """
+            
+            try:
+                response = model.generate_content(prompt)
+                csv_output = response.text
+                
+                # Cleaning to ensure we only get CSV part
+                if "Date," in csv_output:
+                    start_idx = csv_output.find("Date,")
+                    clean_csv = csv_output[start_idx:]
+                    
+                    df = pd.read_csv(io.StringIO(clean_csv), on_bad_lines='skip')
+                    
+                    # Data Cleaning & Serial Numbers
+                    df['Amount'] = pd.to_numeric(df['Amount'].astype(str).str.replace('[^0-9.]', '', regex=True), errors='coerce').fillna(0)
+                    df = df[df['Amount'] > 0]
+                    df.insert(0, 'Sr. No.', range(1, 1 + len(df)))
 
-            st.divider()
-            col1, col2 = st.columns(2)
-            col1.metric("Total Debit (Expense)", f"₹{total_debit:,.2f}")
-            col2.metric("Net Balance", f"₹{summary_stats['net']:,.2f}")
+                    # Sums
+                    total_debit = df[df['Type'].str.contains('Debit', case=False, na=False)]['Amount'].sum()
+                    total_credit = df[df['Type'].str.contains('Credit', case=False, na=False)]['Amount'].sum()
 
-            # Download buttons
-            c_ex, c_pdf = st.columns(2)
-            with c_ex:
-                excel_io = io.BytesIO()
-                df.to_excel(excel_io, index=False)
-                st.download_button("📥 Download Full Excel", data=excel_io.getvalue(), file_name="Full_Audit.xlsx")
-            with c_pdf:
-                pdf_data = generate_pdf_report(df, summary_stats)
-                st.download_button("📥 Download PDF Summary", data=pdf_data, file_name="Summary.pdf")
+                    # Interface Results
+                    st.success(f"Audit Complete! Total Transactions Found: {len(df)}")
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Total Rows", len(df))
+                    c2.metric("Total Expense", f"₹{total_debit:,.2f}")
+                    c3.metric("Total Income", f"₹{total_credit:,.2f}")
 
-            st.subheader("Preview (First 100 Rows)")
-            st.dataframe(df, use_container_width=True)
+                    # --- DUAL DOWNLOAD ---
+                    st.divider()
+                    down1, down2 = st.columns(2)
+                    with down1:
+                        excel_io = io.BytesIO()
+                        df.to_excel(excel_io, index=False)
+                        st.download_button("📥 Download Full Excel", data=excel_io.getvalue(), file_name="Full_Audit.xlsx", use_container_width=True)
+                    
+                    with down2:
+                        pdf = FPDF()
+                        pdf.add_page()
+                        pdf.set_font("Arial", size=12)
+                        pdf.cell(200, 10, txt="Financial Summary", ln=True, align='C')
+                        pdf.cell(200, 10, txt=f"Total Transactions: {len(df)}", ln=True)
+                        pdf.cell(200, 10, txt=f"Net Savings: {total_credit - total_debit}", ln=True)
+                        pdf_data = pdf.output(dest='S').encode('latin-1')
+                        st.download_button("📥 Download PDF Report", data=pdf_data, file_name="Report.pdf", use_container_width=True)
 
-        except Exception as e:
-            st.error(f"Audit Error: No transactions found. Try again or check file quality.")
-
-if st.sidebar.button("Logout"):
-    st.session_state.clear()
-    st.rerun()
+                    st.dataframe(df, use_container_width=True)
+                else:
+                    st.error("AI couldn't format the data. Check Raw Text.")
+                    st.text(csv_output)
+                    
+            except Exception as e:
+                st.error(f"Error: {e}")
