@@ -4,3 +4,4 @@ pdfplumber
 openpyxl
 xlsxwriter
 xlrd
+fpdf2
