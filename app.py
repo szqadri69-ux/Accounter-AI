@@ -26,21 +26,24 @@ def apply_branding():
         unsafe_allow_html=True
     )
 
-def make_columns_unique(df):
-    """Duplicate column names ko handle karne ke liye function"""
-    cols = pd.Series(df.columns)
-    for i, col in enumerate(cols):
-        if (cols == col).sum() > 1:
-            # Agar column name repeat ho raha hai toh index add kar do
-            count = list(cols[:i]).count(col)
-            cols[i] = f"{col}_{count}" if count > 0 else col
-    df.columns = cols
-    return df
+def make_columns_unique(columns):
+    """Duplicate column names ko uniquely rename karne ke liye function"""
+    new_cols = []
+    col_counts = {}
+    for col in columns:
+        col_str = str(col).strip() if col is not None else "Unnamed"
+        if col_str in col_counts:
+            col_counts[col_str] += 1
+            new_cols.append(f"{col_str}_{col_counts[col_str]}")
+        else:
+            col_counts[col_str] = 0
+            new_cols.append(col_str)
+    return new_cols
 
-# --- 2. LOGIC-BASED DATA PARSER (FIXED FOR DUPLICATE INDEX ERROR) ---
+# --- 2. LOGIC-BASED DATA PARSER (OPTIMIZED FOR HDFC & LARGE PDFS) ---
 
 def extract_financial_data(files):
-    """Bina internet ke files se data nikalne ka logic - Fixed for HDFC Duplicate Columns"""
+    """Bina internet ke files se data nikalne ka logic - Improved for Alignment"""
     all_dataframes = []
     status = st.empty()
     progress = st.progress(0)
@@ -54,30 +57,38 @@ def extract_financial_data(files):
                 with pdfplumber.open(f) as pdf:
                     pages_data = []
                     for page in pdf.pages:
-                        table = page.extract_table()
+                        table = page.extract_table({
+                            "vertical_strategy": "lines", 
+                            "horizontal_strategy": "lines",
+                            "intersection_x_tolerance": 5
+                        })
+                        if not table:
+                            # Try again without strict lines if no table found
+                            table = page.extract_table()
+                            
                         if table:
-                            # Table data cleaning
-                            p_df = pd.DataFrame(table[1:], columns=table[0])
-                            # Handle duplicate headers within a single page
-                            p_df = make_columns_unique(p_df)
+                            headers = table[0]
+                            # Unique headers handle karein
+                            unique_headers = make_columns_unique(headers)
+                            p_df = pd.DataFrame(table[1:], columns=unique_headers)
+                            # Remove rows that are completely empty
+                            p_df = p_df.dropna(how='all')
                             pages_data.append(p_df)
+                    
                     if pages_data:
-                        # Combine pages of a single PDF first
                         df_temp = pd.concat(pages_data, ignore_index=True, sort=False)
             
             elif f.name.lower().endswith(('.xlsx', '.xls')):
                 df_temp = pd.read_excel(f)
-                df_temp = make_columns_unique(df_temp)
+                df_temp.columns = make_columns_unique(df_temp.columns)
             
             elif f.name.lower().endswith('.csv'):
                 df_temp = pd.read_csv(f)
-                df_temp = make_columns_unique(df_temp)
+                df_temp.columns = make_columns_unique(df_temp.columns)
             
             if df_temp is not None:
-                # Clean column names (strip spaces and convert to string)
-                df_temp.columns = [str(c).strip() for c in df_temp.columns]
-                # Ensure final uniqueness before appending
-                df_temp = make_columns_unique(df_temp)
+                # Fill missing data and clean strings
+                df_temp = df_temp.fillna("")
                 all_dataframes.append(df_temp)
             
             progress.progress((idx + 1) / len(files))
@@ -87,7 +98,7 @@ def extract_financial_data(files):
     status.text("Processing Complete!")
     
     if all_dataframes:
-        # Combined result across multiple files
+        # Final combine: axis=0 ensures rows are appended, sort=False maintains order
         return pd.concat(all_dataframes, axis=0, ignore_index=True, sort=False)
     return None
 
@@ -118,32 +129,34 @@ if uploaded_files:
         if st.button("📊 INITIATE AUDIT SCAN", type="primary"):
             data = extract_financial_data(uploaded_files)
             if data is not None:
-                # Filling NaN values to prevent display issues
+                # Fill empty cells
                 data = data.fillna("")
                 # Adding default Tally-style columns
-                data['Ledger_Account'] = "Suspense A/c"
-                data['Voucher_Type'] = "Journal"
+                data['Target Ledger'] = "Suspense A/c"
+                data['Voucher'] = "Journal"
                 st.session_state['master_data'] = data
                 st.rerun()
 
     # Phase 2: Auditor Recheck Mode
     if 'master_data' in st.session_state:
         st.divider()
-        st.subheader("📝 Phase 2: Auditor Verification (Tally Mode)")
-        st.info(f"Extracted {len(st.session_state['master_data'])} rows. Assign Ledgers below:")
+        st.subheader("📝 Phase 2: Auditor Verification (Edit & Recheck)")
+        st.info(f"Extracted {len(st.session_state['master_data'])} rows. Edit below if needed:")
         
         # Professional Grid Editor
         edited_df = st.data_editor(
             st.session_state['master_data'],
             column_config={
-                "Ledger_Account": st.column_config.SelectboxColumn(
-                    "Assign Ledger",
+                "Target Ledger": st.column_config.SelectboxColumn(
+                    "Target Ledger (Manual Edit)",
                     options=["Cash", "Bank", "Salary", "Purchase", "Sales", "GST", "Rent", "Suspense A/c"],
-                    required=True
+                    required=True,
+                    width="medium"
                 ),
-                "Voucher_Type": st.column_config.SelectboxColumn(
+                "Voucher": st.column_config.SelectboxColumn(
                     "Voucher",
-                    options=["Payment (F5)", "Receipt (F6)", "Contra (F4)", "Journal (F7)"]
+                    options=["Payment (F5)", "Receipt (F6)", "Contra (F4)", "Journal (F7)"],
+                    width="small"
                 )
             },
             num_rows="dynamic",
@@ -152,7 +165,7 @@ if uploaded_files:
         )
 
         # Export Report
-        if st.button("📈 GENERATE FINAL FINANCIAL REPORT", type="primary"):
+        if st.button("📈 Phase 3: Generate Final Financial Report", type="primary"):
             st.success("Analysis Complete!")
             
             # Export to Excel
