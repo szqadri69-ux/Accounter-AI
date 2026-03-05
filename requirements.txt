@@ -1,6 +1,5 @@
 streamlit
-google-generativeai
-PyPDF2
-fpdf
-xlsxwriter
 pandas
+pdfplumber
+openpyxl
+xlsxwriter
