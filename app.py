@@ -26,10 +26,21 @@ def apply_branding():
         unsafe_allow_html=True
     )
 
-# --- 2. LOGIC-BASED DATA PARSER (FIXED FOR INVALIDINDEXERROR) ---
+def make_columns_unique(df):
+    """Duplicate column names ko handle karne ke liye function"""
+    cols = pd.Series(df.columns)
+    for i, col in enumerate(cols):
+        if (cols == col).sum() > 1:
+            # Agar column name repeat ho raha hai toh index add kar do
+            count = list(cols[:i]).count(col)
+            cols[i] = f"{col}_{count}" if count > 0 else col
+    df.columns = cols
+    return df
+
+# --- 2. LOGIC-BASED DATA PARSER (FIXED FOR DUPLICATE INDEX ERROR) ---
 
 def extract_financial_data(files):
-    """Bina internet ke files se data nikalne ka logic - Fixed for Column Mismatch"""
+    """Bina internet ke files se data nikalne ka logic - Fixed for HDFC Duplicate Columns"""
     all_dataframes = []
     status = st.empty()
     progress = st.progress(0)
@@ -47,19 +58,26 @@ def extract_financial_data(files):
                         if table:
                             # Table data cleaning
                             p_df = pd.DataFrame(table[1:], columns=table[0])
+                            # Handle duplicate headers within a single page
+                            p_df = make_columns_unique(p_df)
                             pages_data.append(p_df)
                     if pages_data:
-                        df_temp = pd.concat(pages_data, ignore_index=True)
+                        # Combine pages of a single PDF first
+                        df_temp = pd.concat(pages_data, ignore_index=True, sort=False)
             
             elif f.name.lower().endswith(('.xlsx', '.xls')):
                 df_temp = pd.read_excel(f)
+                df_temp = make_columns_unique(df_temp)
             
             elif f.name.lower().endswith('.csv'):
                 df_temp = pd.read_csv(f)
+                df_temp = make_columns_unique(df_temp)
             
             if df_temp is not None:
-                # Resetting index and cleaning columns to avoid InvalidIndexError
+                # Clean column names (strip spaces and convert to string)
                 df_temp.columns = [str(c).strip() for c in df_temp.columns]
+                # Ensure final uniqueness before appending
+                df_temp = make_columns_unique(df_temp)
                 all_dataframes.append(df_temp)
             
             progress.progress((idx + 1) / len(files))
@@ -69,7 +87,7 @@ def extract_financial_data(files):
     status.text("Processing Complete!")
     
     if all_dataframes:
-        # 'sort=False' and 'ignore_index=True' prevents the InvalidIndexError
+        # Combined result across multiple files
         return pd.concat(all_dataframes, axis=0, ignore_index=True, sort=False)
     return None
 
