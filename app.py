@@ -2,85 +2,80 @@ import streamlit as st
 import pandas as pd
 import google.generativeai as genai
 import io
-from PyPDF2 import PdfReader
 
-st.set_page_config(page_title="Accounter-AI | High Precision", layout="wide")
+st.set_page_config(page_title="Accounter-AI | Tally Edition", layout="wide")
 
-if 'api_key' not in st.session_state:
-    st.title("🔐 Accounter-AI Login")
-    api_key_input = st.text_input("Enter Gemini API Key:", type="password")
-    if st.button("Login"):
-        st.session_state['api_key'] = api_key_input
-        st.rerun()
-    st.stop()
+# Standard Accounting Categories
+STANDARD_LEDGERS = ["Suspense A/c", "Sales", "Purchase", "Food Exp", "Rent", "Salary", "Electricity", "Conveyance"]
+VOUCHERS = ["Payment (F5)", "Receipt (F6)", "Contra (F4)", "Journal (F7)"]
 
-# --- STABLE CONFIG ---
-# transport='rest' ensures your new key works without 404 errors
-genai.configure(api_key=st.session_state['api_key'], transport='rest')
-model = genai.GenerativeModel('gemini-1.5-flash')
+if 'api_key' in st.session_state:
+    genai.configure(api_key=st.session_state['api_key'], transport='rest')
+    model = genai.GenerativeModel('gemini-1.5-flash')
 
-def extract_transactions(pdf_bytes):
-    try:
-        prompt = """
-        ACT AS A PROFESSIONAL AUDITOR. 
-        Extract EVERY transaction from this document. 
-        Return ONLY a CSV table with headers: Date, Description, Type, Amount.
-        Important: Type must be exactly 'Debit' or 'Credit'.
-        Clean 'Amount' - Numbers only, no ₹ or commas.
-        """
-        response = model.generate_content([prompt, {"mime_type": "application/pdf", "data": pdf_bytes}])
-        return response.text
-    except Exception as e:
-        return f"Error: {str(e)}"
+st.title("📂 Accounter-AI: Enterprise Audit System")
 
-st.title("🚀 Accounter-AI: High Precision Mode")
-
-uploaded_file = st.file_uploader("Upload Bank Statement", type=['pdf'])
+uploaded_file = st.file_uploader("Upload Bank/Credit Card Statement", type=['pdf'])
 
 if uploaded_file:
-    if st.button("📊 START DEEP CALCULATION", type="primary", use_container_width=True):
-        with st.spinner("AI is reading and calculating..."):
-            raw_data = extract_transactions(uploaded_file.getvalue())
+    if 'audit_df' not in st.session_state:
+        if st.button("🔍 Step 1: Scan & Extract Transactions"):
+            with st.spinner("AI is reading Date, Bank, and Card details..."):
+                # Detailed Prompt for Bank & Last 4 Digits
+                prompt = """
+                Extract transactions into CSV format. 
+                Columns: Date, Transaction_Details, Bank_Name, Last_4_Digits, Type (Debit/Credit), Amount.
+                - Bank_Name: Name of bank or Credit Card (e.g. SBI, HDFC).
+                - Last_4_Digits: Last 4 digits of the account/card used.
+                - Date: Transaction date.
+                Return CSV only.
+                """
+                res = model.generate_content([prompt, {"mime_type": "application/pdf", "data": uploaded_file.getvalue()}])
+                
+                # Cleaning & Loading
+                csv_data = res.text.split("Date")[-1]
+                df = pd.read_csv(io.StringIO("Date" + csv_data))
+                df.columns = df.columns.str.strip()
+                df['Amount'] = pd.to_numeric(df['Amount'].astype(str).str.replace(r'[^0-9.]', '', regex=True), errors='coerce').fillna(0)
+                
+                # Adding Ledger and Voucher for Manual Edit
+                df['Ledger'] = "Suspense A/c"
+                df['Voucher'] = df['Type'].apply(lambda x: 'Payment (F5)' if 'Debit' in str(x) else 'Receipt (F6)')
+                
+                st.session_state['audit_df'] = df
+                st.rerun()
+
+    if 'audit_df' in st.session_state:
+        st.subheader("📝 Step 2: Review Transactions (Manual Edit)")
+        st.write("Aap niche table mein Date, Bank Name, ya Ledger manually change kar sakte hain:")
+
+        # Tally-style Editable Grid
+        final_df = st.data_editor(
+            st.session_state['audit_df'],
+            column_config={
+                "Date": st.column_config.TextColumn("Date"),
+                "Bank_Name": st.column_config.TextColumn("Bank/Card"),
+                "Last_4_Digits": st.column_config.TextColumn("Last 4 Digits"),
+                "Ledger": st.column_config.SelectboxColumn("Ledger", options=STANDARD_LEDGERS),
+                "Voucher": st.column_config.SelectboxColumn("Voucher", options=VOUCHERS),
+                "Amount": st.column_config.NumberColumn("Amount", format="₹%.2f")
+            },
+            num_rows="dynamic",
+            use_container_width=True
+        )
+
+        if st.button("📊 Step 3: Finalize & Generate Financial Report", type="primary"):
+            st.divider()
+            st.header("⚖️ Financial Summary")
             
-            if "Error" in raw_data or not raw_data:
-                st.error("AI couldn't find transactions.")
-            else:
-                try:
-                    # Clean AI response
-                    csv_start = raw_data.find("Date")
-                    clean_csv = raw_data[csv_start:].replace('```csv', '').replace('```', '').strip()
-                    
-                    df = pd.read_csv(io.StringIO(clean_csv), on_bad_lines='skip')
-                    
-                    # 1. Clean Column Names (Removes hidden spaces)
-                    df.columns = df.columns.str.strip()
-                    
-                    # 2. Clean 'Amount' column
-                    df['Amount'] = pd.to_numeric(df['Amount'].astype(str).str.replace('[^0-9.]', '', regex=True), errors='coerce').fillna(0)
-                    
-                    # 3. Clean 'Type' column (Critical fix for Zero Calculation)
-                    df['Type'] = df['Type'].astype(str).str.strip().str.capitalize()
-                    
-                    # 4. Filter and Calculate
-                    df = df[df['Amount'] > 0]
-                    total_debit = df[df['Type'] == 'Debit']['Amount'].sum()
-                    total_credit = df[df['Type'] == 'Credit']['Amount'].sum()
-                    
-                    st.success(f"Calculated {len(df)} transactions!")
-                    
-                    # Results Display
-                    c1, c2 = st.columns(2)
-                    c1.metric("Total Expenses (Debit)", f"₹{total_debit:,.2f}")
-                    c2.metric("Total Income (Credit)", f"₹{total_credit:,.2f}")
-                    
-                    st.dataframe(df, use_container_width=True)
-                    
-                    # Excel Download
-                    excel_io = io.BytesIO()
-                    df.to_excel(excel_io, index=False)
-                    st.download_button("📥 Download Excel Report", data=excel_io.getvalue(), file_name="Audit_Report.xlsx")
-                    
-                except Exception as e:
-                    st.error(f"Formatting error: {e}")
-                    st.text(raw_data)
-                    
+            dr = final_df[final_df['Type'].str.contains('Debit', na=False)]['Amount'].sum()
+            cr = final_df[final_df['Type'].str.contains('Credit', na=False)]['Amount'].sum()
+            
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Total Expenses", f"₹{dr:,.2f}")
+            c2.metric("Total Income", f"₹{cr:,.2f}")
+            c3.metric("Net Flow", f"₹{cr - dr:,.2f}")
+
+            st.subheader("Trial Balance (Ledger-wise)")
+            st.table(final_df.groupby('Ledger')['Amount'].sum())
+            
