@@ -7,123 +7,112 @@ import concurrent.futures
 # --- 1. CONFIG & BRANDING ---
 st.set_page_config(page_title="Accounter-AI | Shehzaad Kutchi Memon", layout="wide")
 
-# --- 2. SECURE LOGIN ---
 if 'api_key' not in st.session_state:
     st.title("🔐 Accounter-AI Secure Login")
     api_key_input = st.text_input("Enter Gemini API Key:", type="password")
-    if st.button("Login"):
+    if st.button("Connect & Initialize"):
         st.session_state['api_key'] = api_key_input
         st.rerun()
     st.stop()
 
-# Configure with 'transport=rest' for stability
 genai.configure(api_key=st.session_state['api_key'], transport='rest')
 model = genai.GenerativeModel('gemini-1.5-flash')
 
-# --- 3. POWERFUL EXTRACTION FUNCTION (Multimodal) ---
-def extract_transactions(uploaded_file):
+# --- 2. UNIVERSAL FETCH FUNCTION (FIXED FOR EXCEL/PDF) ---
+def deep_fetch_data(uploaded_file):
     try:
-        mime_type = uploaded_file.type
+        m_type = uploaded_file.type
+        # AI ko strictly instruct karna ki blank response na de
         prompt = """
-        ACT AS A PROFESSIONAL AUDITOR. 
-        Extract EVERY transaction. 
-        Format as CSV ONLY with: Date, Original_Narration, Bank_Detail, Type (Debit/Credit), Amount.
-        Keep 'Original_Narration' EXACTLY as in document.
-        'Bank_Detail' should show Bank Name and Last 4 digits.
-        Clean 'Amount' - Numbers only, remove symbols.
+        IMPORTANT: EXTRACT ALL TRANSACTIONS. 
+        Format as CSV ONLY with these exact columns: Date, Narration, Bank_Account, Type, Amount.
+        - Date: DD/MM/YYYY
+        - Narration: Original transaction name.
+        - Type: Must be 'Debit' or 'Credit'.
+        - Amount: Clean numbers only.
+        If it's an Excel or PDF, read every row. Do not return empty.
         """
-        response = model.generate_content([prompt, {"mime_type": mime_type, "data": uploaded_file.getvalue()}])
+        response = model.generate_content([prompt, {"mime_type": m_type, "data": uploaded_file.getvalue()}])
         return response.text
     except Exception as e:
-        return f"Error: {str(e)}"
+        return f"Error reading file: {str(e)}"
 
-# --- 4. UI ---
+# --- 3. UI ---
 st.title("🚀 Accounter-AI: High Precision Mode")
-st.info("Vision: AI Scan → Auditor Review → Financial Reports")
+st.markdown("### Vision: AI Scan → Auditor Review → Financial Reports")
 
-# Multiple File Upload Support (PDF, Excel, Word, Images, CSV, Text)
 uploaded_files = st.file_uploader(
-    "Upload Statements (Any Format)", 
-    type=['pdf', 'xlsx', 'xls', 'csv', 'txt', 'png', 'jpg', 'doc', 'docx'],
+    "Upload Statements (PDF, Excel, Images)", 
+    type=['pdf', 'xlsx', 'xls', 'csv', 'png', 'jpg'],
     accept_multiple_files=True
 )
 
 if uploaded_files:
-    # Phase 1: AI Reading
     if 'audit_df' not in st.session_state:
         if st.button("📊 START DEEP CALCULATION", type="primary"):
-            with st.spinner(f"AI is reading {len(uploaded_files)} files... Please wait."):
+            with st.spinner("AI entries fetch kar raha hai..."):
                 
-                # Using ThreadPool for faster processing of multiple files
                 with concurrent.futures.ThreadPoolExecutor() as executor:
-                    results = list(executor.map(extract_transactions, uploaded_files))
+                    results = list(executor.map(deep_fetch_data, uploaded_files))
                 
-                combined_csv = "Date,Original_Narration,Bank_Detail,Type,Amount\n" + "\n".join([r.split("Date")[-1] for r in results if "Date" in r])
+                # Combine results logic
+                combined_csv = "Date,Narration,Bank_Account,Type,Amount\n"
+                for res in results:
+                    if "Date" in res:
+                        # Sirf CSV wala part nikaalna
+                        clean_part = res.split("Date")[-1].replace("```csv", "").replace("```", "").strip()
+                        combined_csv += clean_part + "\n"
                 
                 try:
                     df = pd.read_csv(io.StringIO(combined_csv), on_bad_lines='skip')
                     df.columns = df.columns.str.strip()
-                    # Clean Amount Formula
+                    
+                    # Amount cleaning formula (Zero/Blank Fix)
                     df['Amount'] = pd.to_numeric(df['Amount'].astype(str).str.replace(r'[^0-9.]', '', regex=True), errors='coerce').fillna(0)
+                    df = df[df['Amount'] > 0]
                     
-                    # Tally Style Columns for Manual Review
-                    df['Ledger_Account'] = "Suspense A/c"
-                    df['Voucher_Type'] = df['Type'].apply(lambda x: 'Payment (F5)' if 'Debit' in str(x) else 'Receipt (F6)')
-                    
-                    st.session_state['audit_df'] = df
-                    st.rerun()
+                    if df.empty:
+                        st.error("AI ne koi entry fetch nahi ki. Kripya file check karein.")
+                    else:
+                        df['Ledger'] = "Suspense A/c"
+                        df['Voucher'] = df['Type'].apply(lambda x: 'Payment (F5)' if 'Debit' in str(x) else 'Receipt (F6)')
+                        st.session_state['audit_df'] = df
+                        st.rerun()
                 except Exception as e:
-                    st.error(f"Formatting error: {e}")
-                    st.text(combined_csv)
+                    st.error(f"Processing Error: {e}")
+                    st.text("Raw Data received: " + combined_csv)
 
-    # Phase 2: Manual Auditor Review
+    # --- PHASE 2: MANUAL EDIT (AUDITOR VIEW) ---
     if 'audit_df' in st.session_state:
-        st.subheader("📝 Phase 2: Auditor Verification (Edit & Recheck)")
-        st.write("Original Narrations dekh kar entries finalize karein:")
+        st.subheader("📝 Phase 2: Auditor Verification")
         
-        # Tally/Kuber Style Editable Grid
         final_df = st.data_editor(
             st.session_state['audit_df'],
             column_config={
-                "Original_Narration": st.column_config.TextColumn("Narration (Original)", width="large"),
-                "Bank_Detail": st.column_config.TextColumn("Bank/Card Info"),
-                "Ledger_Account": st.column_config.TextColumn("Target Ledger (Manual Edit)"),
-                "Voucher_Type": st.column_config.SelectboxColumn("Voucher", options=["Payment (F5)", "Receipt (F6)", "Contra (F4)", "Journal (F7)"]),
+                "Narration": st.column_config.TextColumn("Original Narration", width="large"),
+                "Ledger": st.column_config.TextColumn("Ledger Account"),
+                "Voucher": st.column_config.SelectboxColumn("Voucher", options=["Payment (F5)", "Receipt (F6)", "Contra (F4)", "Journal (F7)"]),
                 "Amount": st.column_config.NumberColumn("Amount", format="₹%.2f")
             },
             num_rows="dynamic",
             use_container_width=True
         )
 
-        # Phase 3: Final Reports
-        if st.button("📈 Phase 3: Generate Final Financial Report", type="primary"):
+        if st.button("📈 Phase 3: Finalize Financial Report"):
             st.divider()
             dr = final_df[final_df['Type'].str.contains('Debit', na=False)]['Amount'].sum()
             cr = final_df[final_df['Type'].str.contains('Credit', na=False)]['Amount'].sum()
             
-            st.header("⚖️ Final Accounting Summary")
+            st.header("⚖️ Accounting Summary")
             c1, c2, c3 = st.columns(3)
-            c1.metric("Total Expenses (Dr)", f"₹{dr:,.2f}")
-            c2.metric("Total Income (Cr)", f"₹{cr:,.2f}")
-            c3.metric("Net Flow (P&L)", f"₹{cr - dr:,.2f}")
-
-            # Trial Balance Table
-            st.subheader("Final Trial Balance (Ledger-wise)")
-            trial = final_df.groupby('Ledger_Account')['Amount'].sum().reset_index()
-            st.table(trial)
+            c1.metric("Total Expenses", f"₹{dr:,.2f}")
+            c2.metric("Total Income", f"₹{cr:,.2f}")
+            c3.metric("Net Flow", f"₹{cr - dr:,.2f}")
             
-            # Download Button
-            buf = io.BytesIO()
-            final_df.to_excel(buf, index=False)
-            st.download_button("📥 Download Verified Excel", data=buf.getvalue(), file_name="Verified_Audit_Report.xlsx")
+            st.subheader("Trial Balance")
+            st.table(final_df.groupby('Ledger')['Amount'].sum())
 
-# --- FOOTER & BRANDING ---
+# --- FOOTER ---
 st.divider()
-st.markdown(
-    """
-    <div style='text-align: center; color: grey;'>
-        <p>© 2026 | <b>All Rights Reserved by Shehzaad Kutchi Memon</b></p>
-    </div>
-    """, 
-    unsafe_allow_html=True
-)
+st.markdown("<div style='text-align: center; color: grey;'>© 2026 | <b>All Rights Reserved by Shehzaad Kutchi Memon</b></div>", unsafe_allow_html=True)
+            
