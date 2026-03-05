@@ -26,10 +26,10 @@ def apply_branding():
         unsafe_allow_html=True
     )
 
-# --- 2. LOGIC-BASED DATA PARSER (NO AI) ---
+# --- 2. LOGIC-BASED DATA PARSER (FIXED FOR INVALIDINDEXERROR) ---
 
 def extract_financial_data(files):
-    """Bina internet ke files se data nikalne ka logic"""
+    """Bina internet ke files se data nikalne ka logic - Fixed for Column Mismatch"""
     all_dataframes = []
     status = st.empty()
     progress = st.progress(0)
@@ -37,26 +37,41 @@ def extract_financial_data(files):
     for idx, f in enumerate(files):
         try:
             status.text(f"Scanning: {f.name}...")
+            df_temp = None
+            
             if f.name.lower().endswith('.pdf'):
                 with pdfplumber.open(f) as pdf:
-                    for i, page in enumerate(pdf.pages):
+                    pages_data = []
+                    for page in pdf.pages:
                         table = page.extract_table()
                         if table:
-                            df = pd.DataFrame(table[1:], columns=table[0])
-                            all_dataframes.append(df)
+                            # Table data cleaning
+                            p_df = pd.DataFrame(table[1:], columns=table[0])
+                            pages_data.append(p_df)
+                    if pages_data:
+                        df_temp = pd.concat(pages_data, ignore_index=True)
+            
             elif f.name.lower().endswith(('.xlsx', '.xls')):
-                df = pd.read_excel(f)
-                all_dataframes.append(df)
+                df_temp = pd.read_excel(f)
+            
             elif f.name.lower().endswith('.csv'):
-                df = pd.read_csv(f)
-                all_dataframes.append(df)
+                df_temp = pd.read_csv(f)
+            
+            if df_temp is not None:
+                # Resetting index and cleaning columns to avoid InvalidIndexError
+                df_temp.columns = [str(c).strip() for c in df_temp.columns]
+                all_dataframes.append(df_temp)
             
             progress.progress((idx + 1) / len(files))
         except Exception as e:
             st.error(f"Error reading {f.name}: {str(e)}")
             
     status.text("Processing Complete!")
-    return pd.concat(all_dataframes, ignore_index=True) if all_dataframes else None
+    
+    if all_dataframes:
+        # 'sort=False' and 'ignore_index=True' prevents the InvalidIndexError
+        return pd.concat(all_dataframes, axis=0, ignore_index=True, sort=False)
+    return None
 
 # --- 3. PROFESSIONAL INTERFACE ---
 
@@ -85,6 +100,8 @@ if uploaded_files:
         if st.button("📊 INITIATE AUDIT SCAN", type="primary"):
             data = extract_financial_data(uploaded_files)
             if data is not None:
+                # Filling NaN values to prevent display issues
+                data = data.fillna("")
                 # Adding default Tally-style columns
                 data['Ledger_Account'] = "Suspense A/c"
                 data['Voucher_Type'] = "Journal"
@@ -95,7 +112,7 @@ if uploaded_files:
     if 'master_data' in st.session_state:
         st.divider()
         st.subheader("📝 Phase 2: Auditor Verification (Tally Mode)")
-        st.info(f"Extracted {len(st.session_state['master_data'])} rows from files. Assign Ledgers below:")
+        st.info(f"Extracted {len(st.session_state['master_data'])} rows. Assign Ledgers below:")
         
         # Professional Grid Editor
         edited_df = st.data_editor(
@@ -112,7 +129,8 @@ if uploaded_files:
                 )
             },
             num_rows="dynamic",
-            use_container_width=True
+            use_container_width=True,
+            key="audit_grid_editor"
         )
 
         # Export Report
