@@ -52,7 +52,6 @@ def extract_data(files):
                     if pages_data:
                         df_temp = pd.concat(pages_data, axis=0, ignore_index=True)
             elif f.name.lower().endswith(('.xls', '.xlsx')):
-                # Note: 'xlrd' is needed for older .xls files
                 df_temp = pd.read_excel(f)
             elif f.name.lower().endswith('.csv'):
                 df_temp = pd.read_csv(f)
@@ -110,32 +109,36 @@ def create_pdf_report(income, expense, profit, breakdown_df):
     return pdf.output()
 
 # --- 4. INTERFACE ---
-st.title("🚀 Accounter-AI: Professional Financial Suite")
-st.markdown("### Owner: Shehzaad Kutchi Memon")
+st.title("🚀 Accounter-AI Professional")
+st.markdown("##### Owner: Shehzaad Kutchi Memon")
 
-# Setup session state for persistence
+# Session State
 if 'ledgers' not in st.session_state:
     st.session_state['ledgers'] = ["Cash", "Bank", "Sales", "Purchase", "Rent Income", "Salary Expense", "GST Income", "Other Income", "Suspense A/c"]
 
-# Sidebar
+# Sidebar Management
 with st.sidebar:
-    st.header("Software Control")
-    st.success("Status: Local Processing Enabled")
-    st.info("Engine: High-Volume Parser v2.5")
-    if st.button("🔄 Reset All Data"):
+    st.header("Settings")
+    new_ledger = st.text_input("New Ledger Name:")
+    if st.button("Add to List"):
+        if new_ledger and new_ledger not in st.session_state['ledgers']:
+            st.session_state['ledgers'].append(new_ledger)
+            st.rerun()
+    
+    st.divider()
+    if st.button("🔄 Reset System"):
         for key in list(st.session_state.keys()):
             del st.session_state[key]
         st.rerun()
 
 # Step 1: Upload
-uploaded_files = st.file_uploader("Upload Bank Statements (HDFC, Paytm, SBI, etc.)", type=['pdf', 'xlsx', 'xls', 'csv'], accept_multiple_files=True)
+uploaded_files = st.file_uploader("Upload Statements", type=['pdf', 'xlsx', 'xls', 'csv'], accept_multiple_files=True)
 
 if uploaded_files:
     if 'raw_audit_data' not in st.session_state:
-        if st.button("🔍 Step 1: Scan & Fetch Entries", type="primary"):
+        if st.button("START AUDIT SCAN", type="primary", use_container_width=True):
             data = extract_data(uploaded_files)
             if data is not None:
-                # Adding default columns for management
                 data['Select Ledger'] = "Suspense A/c"
                 data['Income/Expense'] = "Expense"
                 data['Amount (Final)'] = 0.0
@@ -145,37 +148,30 @@ if uploaded_files:
 if 'raw_audit_data' in st.session_state:
     st.divider()
     
-    # -------------------------------------------------------------------------
-    # QUICK LEDGER MANAGER
-    # -------------------------------------------------------------------------
-    st.subheader("📝 Step 2: Auditor Verification (Edit & Recheck)")
-    
-    with st.container(border=True):
-        st.markdown("#### ➕ Quick Ledger Manager")
-        l_col1, l_col2 = st.columns([4, 1])
-        new_head = l_col1.text_input("Naya Ledger ka Naam likhein:", placeholder="e.g. Electricity Bill, Tea Expense...", key="ledger_input_field")
-        if l_col2.button("Add Ledger to List", use_container_width=True, type="secondary"):
-            if new_head and new_head not in st.session_state['ledgers']:
-                st.session_state['ledgers'].append(new_head)
-                st.toast(f"Ledger '{new_head}' list mein add ho gaya!")
+    # TABLE TOOLBAR AREA
+    t_col1, t_col2 = st.columns([3, 1])
+    with t_col1:
+        st.subheader("Audit Worksheet")
+    with t_col2:
+        # Mini ledger manager tucked away near the table top
+        quick_add = st.popover("⚙️ Manage Ledgers")
+        q_name = quick_add.text_input("New Name:")
+        if quick_add.button("Add"):
+            if q_name and q_name not in st.session_state['ledgers']:
+                st.session_state['ledgers'].append(q_name)
                 st.rerun()
-        st.caption(f"**Available Ledgers in Dropdown:** {', '.join(st.session_state['ledgers'])}")
 
     # Editable Grid
-    # grid_key is dynamic so that when ledgers list changes, the dropdown options in the editor update
     grid_key = f"audit_grid_{len(st.session_state['ledgers'])}"
-    
-    st.info("Tip: Table ke right side par '+' button daba kar manually entry add kar sakte hain.")
     
     edited_df = st.data_editor(
         st.session_state['raw_audit_data'],
         column_config={
             "Select Ledger": st.column_config.SelectboxColumn(
-                "Select Ledger",
+                "Ledger",
                 options=st.session_state['ledgers'],
                 required=True,
-                default="Suspense A/c",
-                width="medium"
+                default="Suspense A/c"
             ),
             "Income/Expense": st.column_config.SelectboxColumn(
                 "Type",
@@ -183,60 +179,44 @@ if 'raw_audit_data' in st.session_state:
                 required=True,
                 default="Expense"
             ),
-            "Amount (Final)": st.column_config.NumberColumn("Amount", format="₹%.2f", min_value=0, default=0.0)
+            "Amount (Final)": st.column_config.NumberColumn("Amount", format="₹%.2f", min_value=0)
         },
-        num_rows="dynamic", # Enables the '+' Add row button in the UI
+        num_rows="dynamic",
         use_container_width=True,
         key=grid_key
     )
 
-    # Step 3: Financial Report
-    if st.button("📊 Step 3: Generate Financial Profit & Loss Report", type="primary"):
-        try:
-            # Sync changes to session state
-            st.session_state['raw_audit_data'] = edited_df
-            
-            df = edited_df.copy()
-            df['Amount (Final)'] = pd.to_numeric(df['Amount (Final)'], errors='coerce').fillna(0)
-            
-            income = df[df['Income/Expense'] == "Income"]['Amount (Final)'].sum()
-            expense = df[df['Income/Expense'] == "Expense"]['Amount (Final)'].sum()
-            profit = income - expense
-            
-            st.divider()
-            st.header("📊 Financial Profit & Loss Analysis")
-            
-            # Metrics
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Total Income", f"₹{income:,.2f}")
-            m2.metric("Total Expense", f"₹{expense:,.2f}")
-            m3.metric("Net Profit/Loss", f"₹{profit:,.2f}", delta=float(profit))
+    # Final Actions
+    if st.button("GENERATE FINAL REPORT", type="primary", use_container_width=True):
+        st.session_state['raw_audit_data'] = edited_df
+        df = edited_df.copy()
+        df['Amount (Final)'] = pd.to_numeric(df['Amount (Final)'], errors='coerce').fillna(0)
+        
+        income = df[df['Income/Expense'] == "Income"]['Amount (Final)'].sum()
+        expense = df[df['Income/Expense'] == "Expense"]['Amount (Final)'].sum()
+        profit = income - expense
+        
+        st.divider()
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Income", f"₹{income:,.2f}")
+        m2.metric("Expense", f"₹{expense:,.2f}")
+        m3.metric("P&L", f"₹{profit:,.2f}", delta=float(profit))
 
-            # Table Breakdown
-            st.subheader("Ledger-wise Summary")
-            if not df.empty:
-                breakdown = df.groupby(['Select Ledger', 'Income/Expense'])['Amount (Final)'].sum().reset_index()
-                breakdown.columns = ['Account_Head', 'Entry_Type', 'Amount']
-                st.dataframe(breakdown, use_container_width=True)
+        breakdown = df.groupby(['Select Ledger', 'Income/Expense'])['Amount (Final)'].sum().reset_index()
+        breakdown.columns = ['Account_Head', 'Entry_Type', 'Amount']
+        
+        st.subheader("Summary Report")
+        st.table(breakdown)
 
-                # Export
-                st.subheader("📥 Export Financial Documents")
-                ec1, ec2 = st.columns(2)
-                
-                with ec1:
-                    output_ex = io.BytesIO()
-                    with pd.ExcelWriter(output_ex, engine='xlsxwriter') as writer:
-                        df.to_excel(writer, index=False, sheet_name='All_Entries')
-                        breakdown.to_excel(writer, index=False, sheet_name='PL_Summary')
-                    st.download_button("📥 Download Excel Report", output_ex.getvalue(), f"Financial_Report_{datetime.now().strftime('%d%m')}.xlsx")
-
-                with ec2:
-                    pdf_output = create_pdf_report(income, expense, profit, breakdown)
-                    st.download_button("📥 Download PDF Report", pdf_output, "Financial_Report.pdf", "application/pdf")
-            else:
-                st.warning("No data available to generate breakdown.")
-                
-        except Exception as e:
-            st.error(f"Report generation mein issue aaya: {e}")
+        ec1, ec2 = st.columns(2)
+        with ec1:
+            output_ex = io.BytesIO()
+            with pd.ExcelWriter(output_ex, engine='xlsxwriter') as writer:
+                df.to_excel(writer, index=False, sheet_name='Entries')
+                breakdown.to_excel(writer, index=False, sheet_name='Summary')
+            st.download_button("Excel Export", output_ex.getvalue(), "Report.xlsx")
+        with ec2:
+            pdf_output = create_pdf_report(income, expense, profit, breakdown)
+            st.download_button("PDF Export", pdf_output, "Report.pdf")
 
 apply_branding()
