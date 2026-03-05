@@ -21,7 +21,6 @@ def apply_branding():
     )
 
 def make_columns_unique(columns):
-    """Duplicate columns ko handle karne ke liye function"""
     new_cols = []
     col_counts = {}
     for col in columns:
@@ -34,7 +33,7 @@ def make_columns_unique(columns):
             new_cols.append(col_str)
     return new_cols
 
-# --- 2. DATA EXTRACTION LOGIC (FIXED FOR INVALID INDEX ERROR) ---
+# --- 2. DATA EXTRACTION LOGIC ---
 def extract_data(files):
     all_dfs = []
     for f in files:
@@ -51,13 +50,9 @@ def extract_data(files):
                             p_df = pd.DataFrame(rows, columns=headers)
                             pages_data.append(p_df)
                     if pages_data:
-                        # Har page ko alag se handle karke jodein taaki index error na aaye
                         df_temp = pd.concat(pages_data, axis=0, ignore_index=True, sort=False)
-            
-            elif f.name.lower().endswith('.xls'):
-                df_temp = pd.read_excel(f, engine='xlrd')
-            elif f.name.lower().endswith('.xlsx'):
-                df_temp = pd.read_excel(f, engine='openpyxl')
+            elif f.name.lower().endswith(('.xls', '.xlsx')):
+                df_temp = pd.read_excel(f)
             elif f.name.lower().endswith('.csv'):
                 df_temp = pd.read_csv(f)
             
@@ -68,7 +63,6 @@ def extract_data(files):
             st.error(f"Error reading {f.name}: {e}")
     
     if all_dfs:
-        # Final concat with sort=False to prevent index mismatch
         combined = pd.concat(all_dfs, axis=0, ignore_index=True, sort=False)
         return combined.fillna("")
     return None
@@ -84,7 +78,6 @@ def create_pdf_report(income, expense, profit, breakdown_df):
     pdf.cell(190, 10, txt=f"Date: {datetime.now().strftime('%d-%m-%Y')}", ln=True, align='C')
     pdf.ln(10)
     
-    # Summary Section
     pdf.set_fill_color(240, 240, 240)
     pdf.set_font("Helvetica", 'B', 12)
     pdf.cell(95, 10, "Description", 1, 0, 'L', True)
@@ -97,14 +90,10 @@ def create_pdf_report(income, expense, profit, breakdown_df):
     pdf.cell(95, 10, f"{expense:,.2f}", 1, 1)
     
     pdf.set_font("Helvetica", 'B', 12)
-    pdf.set_text_color(0, 128, 0) if profit >= 0 else pdf.set_text_color(255, 0, 0)
     pdf.cell(95, 10, "Net Profit/Loss", 1)
     pdf.cell(95, 10, f"{profit:,.2f}", 1, 1)
-    pdf.set_text_color(0, 0, 0)
     pdf.ln(10)
     
-    # Breakdown Section
-    pdf.set_font("Helvetica", 'B', 12)
     pdf.cell(190, 10, txt="Ledger-wise Breakdown:", ln=True)
     pdf.set_font("Helvetica", 'B', 10)
     pdf.cell(90, 10, "Account Head", 1, 0, 'L', True)
@@ -120,43 +109,57 @@ def create_pdf_report(income, expense, profit, breakdown_df):
     return pdf.output()
 
 # --- 4. INTERFACE ---
-st.title("🚀 Accounter-AI: Enterprise Financial Suite")
-st.markdown("### Powered by Shehzaad Kutchi Memon")
+st.title("🚀 Accounter-AI: Professional Financial Suite")
+st.markdown("### Owner: Shehzaad Kutchi Memon")
 
+# Ledger state initialization
 if 'ledgers' not in st.session_state:
     st.session_state['ledgers'] = ["Cash", "Bank", "Sales", "Purchase", "Rent Income", "Salary Expense", "GST Income", "Other Income", "Suspense A/c"]
 
+# Software Control Sidebar
 with st.sidebar:
-    st.header("⚙️ Ledger Management")
-    new_ledger = st.text_input("Add New Ledger Name:")
-    if st.button("➕ Add to List"):
-        if new_ledger and new_ledger not in st.session_state['ledgers']:
-            st.session_state['ledgers'].append(new_ledger)
-            st.success(f"Added: {new_ledger}")
-    
-    st.divider()
-    st.write("**Current Ledger List:**")
-    st.write(", ".join(st.session_state['ledgers']))
+    st.header("Software Control")
+    st.success("Status: Local Processing Enabled")
+    st.info("Engine: High-Volume Parser v2.5")
+    if st.button("🔄 Reset All Data"):
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        st.rerun()
 
-uploaded_files = st.file_uploader("Upload Statements (PDF/Excel)", type=['pdf', 'xlsx', 'xls', 'csv'], accept_multiple_files=True)
+# Step 1: Upload
+uploaded_files = st.file_uploader("Upload Bank Statements (HDFC, Paytm, SBI, etc.)", type=['pdf', 'xlsx', 'xls', 'csv'], accept_multiple_files=True)
 
 if uploaded_files:
     if 'raw_audit_data' not in st.session_state:
         if st.button("🔍 Step 1: Scan & Fetch Entries", type="primary"):
             data = extract_data(uploaded_files)
             if data is not None:
-                if 'Account_Head' not in data.columns:
-                    data['Account_Head'] = "Suspense A/c"
-                if 'Entry_Type' not in data.columns:
-                    data['Entry_Type'] = "Expense"
-                if 'Amount' not in data.columns:
-                    data['Amount'] = 0.0
+                # Add columns if missing
+                if 'Account_Head' not in data.columns: data['Account_Head'] = "Suspense A/c"
+                if 'Entry_Type' not in data.columns: data['Entry_Type'] = "Expense"
+                if 'Amount' not in data.columns: data['Amount'] = 0.0
                 st.session_state['raw_audit_data'] = data
                 st.rerun()
 
 if 'raw_audit_data' in st.session_state:
     st.divider()
-    st.subheader("📝 Step 2: Auditor Review (Editable Grid)")
+    
+    # NEW: Ledger Management INSIDE main screen to avoid refresh issues
+    with st.expander("➕ Add New Ledgers (Manage List)", expanded=False):
+        col_l1, col_l2 = st.columns([3, 1])
+        new_l_name = col_l1.text_input("Enter New Ledger Name:", key="new_l_input")
+        if col_l2.button("Add Ledger", use_container_width=True):
+            if new_l_name and new_l_name not in st.session_state['ledgers']:
+                st.session_state['ledgers'].append(new_l_name)
+                st.toast(f"Ledger '{new_l_name}' added successfully!")
+                st.rerun()
+        st.write("**Current Ledgers:** " + ", ".join(st.session_state['ledgers']))
+
+    st.subheader("📝 Step 2: Auditor Verification (Edit & Recheck)")
+    
+    # Editable Grid
+    # We use a key that includes the length of ledgers so it updates when a ledger is added
+    grid_key = f"audit_grid_{len(st.session_state['ledgers'])}"
     
     edited_df = st.data_editor(
         st.session_state['raw_audit_data'],
@@ -164,21 +167,27 @@ if 'raw_audit_data' in st.session_state:
             "Account_Head": st.column_config.SelectboxColumn(
                 "Select Ledger",
                 options=st.session_state['ledgers'],
-                required=True
+                required=True,
+                width="medium"
             ),
             "Entry_Type": st.column_config.SelectboxColumn(
                 "Income/Expense",
                 options=["Income", "Expense", "Transfer"],
                 required=True
             ),
-            "Amount": st.column_config.NumberColumn("Amount", format="₹%.2f")
+            "Amount": st.column_config.NumberColumn("Amount (Final)", format="₹%.2f")
         },
         num_rows="dynamic",
-        use_container_width=True
+        use_container_width=True,
+        key=grid_key
     )
 
-    if st.button("📈 Step 3: Generate Financial Report", type="primary"):
+    # Step 3: Financial Report
+    if st.button("📊 Step 3: Generate Financial Profit & Loss Report", type="primary"):
         try:
+            # Save the edits back to session state to prevent loss
+            st.session_state['raw_audit_data'] = edited_df
+            
             df = edited_df.copy()
             df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce').fillna(0)
             
@@ -187,29 +196,33 @@ if 'raw_audit_data' in st.session_state:
             profit = income - expense
             
             st.divider()
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Total Income", f"₹{income:,.2f}")
-            col2.metric("Total Expense", f"₹{expense:,.2f}")
-            col3.metric("Net Profit", f"₹{profit:,.2f}", delta=float(profit))
+            st.header("📊 Profit & Loss Summary")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Total Income", f"₹{income:,.2f}")
+            c2.metric("Total Expense", f"₹{expense:,.2f}")
+            c3.metric("Net Profit/Loss", f"₹{profit:,.2f}", delta=float(profit))
 
+            # Table Breakdown
+            st.subheader("Ledger Summary")
             breakdown = df.groupby(['Account_Head', 'Entry_Type'])['Amount'].sum().reset_index()
             st.table(breakdown)
 
-            st.subheader("📥 Download Professional Reports")
-            dl_col1, dl_col2 = st.columns(2)
+            # Export Buttons
+            st.subheader("📥 Export Financial Documents")
+            ec1, ec2 = st.columns(2)
             
-            with dl_col1:
-                output_excel = io.BytesIO()
-                with pd.ExcelWriter(output_excel, engine='xlsxwriter') as writer:
-                    df.to_excel(writer, index=False, sheet_name='Details')
-                    breakdown.to_excel(writer, index=False, sheet_name='Summary')
-                st.download_button("📥 Download Excel", output_excel.getvalue(), "Financial_Audit.xlsx")
+            with ec1:
+                output_ex = io.BytesIO()
+                with pd.ExcelWriter(output_ex, engine='xlsxwriter') as writer:
+                    df.to_excel(writer, index=False, sheet_name='All_Entries')
+                    breakdown.to_excel(writer, index=False, sheet_name='PL_Summary')
+                st.download_button("📥 Download Excel Report", output_ex.getvalue(), "Financial_Report.xlsx")
 
-            with dl_col2:
-                pdf_bytes = create_pdf_report(income, expense, profit, breakdown)
-                st.download_button("📥 Download PDF", pdf_bytes, "Financial_Report_Shehzaad.pdf", "application/pdf")
+            with ec2:
+                pdf_output = create_pdf_report(income, expense, profit, breakdown)
+                st.download_button("📥 Download PDF Report", pdf_output, "Financial_Report.pdf", "application/pdf")
                 
         except Exception as e:
-            st.error(f"Error: {e}")
+            st.error(f"Error generating report: {e}")
 
 apply_branding()
