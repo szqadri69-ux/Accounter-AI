@@ -52,6 +52,7 @@ def extract_data(files):
                     if pages_data:
                         df_temp = pd.concat(pages_data, axis=0, ignore_index=True)
             elif f.name.lower().endswith(('.xls', '.xlsx')):
+                # Note: 'xlrd' is needed for older .xls files
                 df_temp = pd.read_excel(f)
             elif f.name.lower().endswith('.csv'):
                 df_temp = pd.read_csv(f)
@@ -134,6 +135,7 @@ if uploaded_files:
         if st.button("🔍 Step 1: Scan & Fetch Entries", type="primary"):
             data = extract_data(uploaded_files)
             if data is not None:
+                # Adding default columns for management
                 data['Select Ledger'] = "Suspense A/c"
                 data['Income/Expense'] = "Expense"
                 data['Amount (Final)'] = 0.0
@@ -144,7 +146,7 @@ if 'raw_audit_data' in st.session_state:
     st.divider()
     
     # -------------------------------------------------------------------------
-    # NEW LEDGER ADDITION BLOCK - TABLE KE THEEK UPAR (AS REQUESTED)
+    # QUICK LEDGER MANAGER
     # -------------------------------------------------------------------------
     st.subheader("📝 Step 2: Auditor Verification (Edit & Recheck)")
     
@@ -152,16 +154,18 @@ if 'raw_audit_data' in st.session_state:
         st.markdown("#### ➕ Quick Ledger Manager")
         l_col1, l_col2 = st.columns([4, 1])
         new_head = l_col1.text_input("Naya Ledger ka Naam likhein:", placeholder="e.g. Electricity Bill, Tea Expense...", key="ledger_input_field")
-        if l_col2.button("Add Ledger", use_container_width=True, type="secondary"):
+        if l_col2.button("Add Ledger to List", use_container_width=True, type="secondary"):
             if new_head and new_head not in st.session_state['ledgers']:
-                # Save current grid state before refresh
                 st.session_state['ledgers'].append(new_head)
-                st.toast(f"Ledger '{new_head}' add ho gaya!")
+                st.toast(f"Ledger '{new_head}' list mein add ho gaya!")
                 st.rerun()
-        st.caption(f"**Current Ledgers:** {', '.join(st.session_state['ledgers'])}")
+        st.caption(f"**Available Ledgers in Dropdown:** {', '.join(st.session_state['ledgers'])}")
 
     # Editable Grid
+    # grid_key is dynamic so that when ledgers list changes, the dropdown options in the editor update
     grid_key = f"audit_grid_{len(st.session_state['ledgers'])}"
+    
+    st.info("Tip: Table ke right side par '+' button daba kar manually entry add kar sakte hain.")
     
     edited_df = st.data_editor(
         st.session_state['raw_audit_data'],
@@ -170,16 +174,18 @@ if 'raw_audit_data' in st.session_state:
                 "Select Ledger",
                 options=st.session_state['ledgers'],
                 required=True,
+                default="Suspense A/c",
                 width="medium"
             ),
             "Income/Expense": st.column_config.SelectboxColumn(
                 "Type",
                 options=["Income", "Expense", "Transfer"],
-                required=True
+                required=True,
+                default="Expense"
             ),
-            "Amount (Final)": st.column_config.NumberColumn("Amount", format="₹%.2f")
+            "Amount (Final)": st.column_config.NumberColumn("Amount", format="₹%.2f", min_value=0, default=0.0)
         },
-        num_rows="dynamic",
+        num_rows="dynamic", # Enables the '+' Add row button in the UI
         use_container_width=True,
         key=grid_key
     )
@@ -187,7 +193,7 @@ if 'raw_audit_data' in st.session_state:
     # Step 3: Financial Report
     if st.button("📊 Step 3: Generate Financial Profit & Loss Report", type="primary"):
         try:
-            # Edits save karein
+            # Sync changes to session state
             st.session_state['raw_audit_data'] = edited_df
             
             df = edited_df.copy()
@@ -208,24 +214,27 @@ if 'raw_audit_data' in st.session_state:
 
             # Table Breakdown
             st.subheader("Ledger-wise Summary")
-            breakdown = df.groupby(['Select Ledger', 'Income/Expense'])['Amount (Final)'].sum().reset_index()
-            breakdown.columns = ['Account_Head', 'Entry_Type', 'Amount']
-            st.dataframe(breakdown, use_container_width=True)
+            if not df.empty:
+                breakdown = df.groupby(['Select Ledger', 'Income/Expense'])['Amount (Final)'].sum().reset_index()
+                breakdown.columns = ['Account_Head', 'Entry_Type', 'Amount']
+                st.dataframe(breakdown, use_container_width=True)
 
-            # Export
-            st.subheader("📥 Export Financial Documents")
-            ec1, ec2 = st.columns(2)
-            
-            with ec1:
-                output_ex = io.BytesIO()
-                with pd.ExcelWriter(output_ex, engine='xlsxwriter') as writer:
-                    df.to_excel(writer, index=False, sheet_name='All_Entries')
-                    breakdown.to_excel(writer, index=False, sheet_name='PL_Summary')
-                st.download_button("📥 Download Excel Report", output_ex.getvalue(), f"Financial_Report_{datetime.now().strftime('%d%m')}.xlsx")
+                # Export
+                st.subheader("📥 Export Financial Documents")
+                ec1, ec2 = st.columns(2)
+                
+                with ec1:
+                    output_ex = io.BytesIO()
+                    with pd.ExcelWriter(output_ex, engine='xlsxwriter') as writer:
+                        df.to_excel(writer, index=False, sheet_name='All_Entries')
+                        breakdown.to_excel(writer, index=False, sheet_name='PL_Summary')
+                    st.download_button("📥 Download Excel Report", output_ex.getvalue(), f"Financial_Report_{datetime.now().strftime('%d%m')}.xlsx")
 
-            with ec2:
-                pdf_output = create_pdf_report(income, expense, profit, breakdown)
-                st.download_button("📥 Download PDF Report", pdf_output, "Financial_Report.pdf", "application/pdf")
+                with ec2:
+                    pdf_output = create_pdf_report(income, expense, profit, breakdown)
+                    st.download_button("📥 Download PDF Report", pdf_output, "Financial_Report.pdf", "application/pdf")
+            else:
+                st.warning("No data available to generate breakdown.")
                 
         except Exception as e:
             st.error(f"Report generation mein issue aaya: {e}")
