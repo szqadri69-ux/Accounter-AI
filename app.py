@@ -3,188 +3,167 @@ import pandas as pd
 import pdfplumber
 import io
 import re
+from datetime import datetime
 
-# --- 1. SETTINGS & BRANDING (SHEHZAAD KUTCHI MEMON) ---
-st.set_page_config(
-    page_title="Accounter-AI | Shehzaad Kutchi Memon", 
-    layout="wide"
-)
+# --- 1. SETTINGS & BRANDING ---
+st.set_page_config(page_title="Accounter-AI | Shehzaad Kutchi Memon", layout="wide")
 
 def apply_branding():
-    """Professional Footer with All Rights Reserved Branding"""
-    st.markdown("<br><br>", unsafe_allow_html=True)
     st.markdown(
         """
-        <div style='text-align: center; padding: 25px; border-radius: 15px; background-color: #f8f9fa; border-top: 4px solid #007bff;'>
-            <p style='margin: 0; font-size: 1.3em; color: #2c3e50; font-family: sans-serif;'>
+        <div style='text-align: center; padding: 20px; border-radius: 10px; background-color: #f1f3f6; border-top: 4px solid #1e88e5; margin-top: 50px;'>
+            <p style='margin: 0; font-size: 1.2em; color: #1a237e;'>
                 © 2026 | <b>All Rights Reserved by Shehzaad Kutchi Memon</b>
-            </p>
-            <p style='font-size: 0.9em; color: #6c757d; margin-top: 8px;'>
-                Professional Enterprise Auditing System | 100% Secure Offline Logic Engine
             </p>
         </div>
         """, 
         unsafe_allow_html=True
     )
 
-def make_columns_unique(columns):
-    """Duplicate column names ko uniquely rename karne ke liye function"""
-    new_cols = []
-    col_counts = {}
-    for col in columns:
-        col_str = str(col).strip() if col is not None and str(col).strip() != "" else "Unnamed"
-        if col_str in col_counts:
-            col_counts[col_str] += 1
-            new_cols.append(f"{col_str}_{col_counts[col_str]}")
-        else:
-            col_counts[col_str] = 0
-            new_cols.append(col_str)
-    return new_cols
-
-# --- 2. ADVANCED DATA PARSER (SPECIAL FOR HDFC & ALIGNMENT ISSUES) ---
-
-def extract_financial_data(files):
-    """HDFC aur complex bank statements ke liye optimized parser"""
-    all_dataframes = []
-    status = st.empty()
-    progress = st.progress(0)
-    
-    for idx, f in enumerate(files):
+# --- 2. DATA EXTRACTION LOGIC ---
+def extract_data(files):
+    all_dfs = []
+    for f in files:
         try:
-            status.text(f"Deep Scanning: {f.name}...")
-            df_temp = None
-            
             if f.name.lower().endswith('.pdf'):
                 with pdfplumber.open(f) as pdf:
-                    pages_data = []
                     for page in pdf.pages:
-                        # Try Multiple Strategies for Bank Alignment
-                        # Strategy 1: Text-based (Best for HDFC/Standard Banks)
-                        table = page.extract_table({
-                            "vertical_strategy": "text", 
-                            "horizontal_strategy": "text",
-                            "snap_tolerance": 3,
-                        })
-                        
-                        if not table or len(table) < 2:
-                            # Strategy 2: Line-based (Fallback)
-                            table = page.extract_table()
-                            
+                        table = page.extract_table({"vertical_strategy": "text", "horizontal_strategy": "text"})
                         if table:
-                            headers = [str(h).replace('\n', ' ') for h in table[0]]
-                            unique_headers = make_columns_unique(headers)
-                            
-                            # Data Cleaning: Remove internal newlines that cause "stretching"
-                            cleaned_rows = []
-                            for row in table[1:]:
-                                cleaned_row = [str(cell).replace('\n', ' ').strip() if cell else "" for cell in row]
-                                # Sirf wo rows lein jisme kuch data ho
-                                if any(cleaned_row):
-                                    cleaned_rows.append(cleaned_row)
-                            
-                            p_df = pd.DataFrame(cleaned_rows, columns=unique_headers)
-                            pages_data.append(p_df)
-                    
-                    if pages_data:
-                        df_temp = pd.concat(pages_data, ignore_index=True, sort=False)
-            
-            elif f.name.lower().endswith(('.xlsx', '.xls')):
-                df_temp = pd.read_excel(f)
-                df_temp.columns = make_columns_unique(df_temp.columns)
-            
-            elif f.name.lower().endswith('.csv'):
-                df_temp = pd.read_csv(f)
-                df_temp.columns = make_columns_unique(df_temp.columns)
-            
-            if df_temp is not None:
-                # Basic cleaning
-                df_temp = df_temp.fillna("")
-                all_dataframes.append(df_temp)
-            
-            progress.progress((idx + 1) / len(files))
+                            df = pd.DataFrame(table[1:], columns=[str(c).replace('\n',' ') for c in table[0]])
+                            all_dfs.append(df)
+            elif f.name.lower().endswith('.xls'):
+                all_dfs.append(pd.read_excel(f, engine='xlrd'))
+            elif f.name.lower().endswith('.xlsx'):
+                all_dfs.append(pd.read_excel(f, engine='openpyxl'))
+            else:
+                all_dfs.append(pd.read_csv(f))
         except Exception as e:
-            st.error(f"Error reading {f.name}: {str(e)}")
-            
-    status.text("Audit Processing Complete!")
+            st.error(f"Error reading {f.name}: {e}")
     
-    if all_dataframes:
-        return pd.concat(all_dataframes, axis=0, ignore_index=True, sort=False)
+    if all_dataframes := all_dfs:
+        combined = pd.concat(all_dataframes, ignore_index=True, sort=False)
+        combined.columns = [str(c).strip() for c in combined.columns]
+        return combined.fillna("")
     return None
 
-# --- 3. PROFESSIONAL INTERFACE ---
+# --- 3. INTERFACE & WORKFLOW ---
+st.title("🚀 Accounter-AI: Professional Financial Suite")
+st.markdown("### Owner: Shehzaad Kutchi Memon")
 
-st.title("🚀 Accounter-AI: Enterprise Auditor")
-st.markdown("<h3 style='color: #2c3e50;'>All Rights Reserved by Shehzaad Kutchi Memon</h3>", unsafe_allow_html=True)
-
-# Sidebar
+# Sidebar for Ledger Management
 with st.sidebar:
-    st.header("Software Control")
-    st.info("Status: Local Processing Enabled")
-    st.write("**Owner:** Shehzaad Kutchi Memon")
-    st.write("**Engine:** High-Volume Parser v2.1")
+    st.header("⚙️ Ledger Settings")
+    custom_ledgers = st.text_area("Add Custom Ledgers (Comma Separated)", 
+                                 "Cash, Bank, Sales, Purchase, Rent Income, GST Income, Salary Expense, Office Rent, Other Income, Personal")
+    ledger_list = [x.strip() for x in custom_ledgers.split(",")]
+    
     st.divider()
-    st.write("© 2026 | All Rights Reserved")
+    st.info("System Mode: Offline Logic Auditor")
 
-# File Upload Section
-uploaded_files = st.file_uploader(
-    "Upload Bank Statements (HDFC, Paytm, SBI, etc.)", 
-    type=['pdf', 'xlsx', 'xls', 'csv'], 
-    accept_multiple_files=True
-)
+uploaded_files = st.file_uploader("Upload Statements (PDF/Excel)", type=['pdf', 'xlsx', 'xls', 'csv'], accept_multiple_files=True)
 
 if uploaded_files:
-    if 'master_data' not in st.session_state:
-        if st.button("📊 START DEEP CALCULATION", type="primary"):
-            data = extract_financial_data(uploaded_files)
-            if data is not None and not data.empty:
-                data = data.fillna("")
-                # Add Auditor Columns
-                data['Target Ledger'] = "Suspense A/c"
-                data['Voucher'] = "Journal"
-                st.session_state['master_data'] = data
+    if 'raw_audit_data' not in st.session_state:
+        if st.button("🔍 Step 1: Scan & Fetch Entries", type="primary"):
+            data = extract_data(uploaded_files)
+            if data is not None:
+                # Standardizing columns for P&L
+                data['Account_Head'] = "Suspense A/c"
+                data['Entry_Type'] = "Expense" # Default
+                if 'Amount' not in data.columns:
+                    data['Amount'] = 0.0
+                st.session_state['raw_audit_data'] = data
                 st.rerun()
-            else:
-                st.error("AI ne koi entry fetch nahi ki. Kripya file check karein.")
 
-    # Phase 2: Auditor Recheck Mode
-    if 'master_data' in st.session_state:
-        st.divider()
-        st.subheader("📝 Phase 2: Auditor Verification (Edit & Recheck)")
-        st.write("Original Narrations dekh kar entries finalize karein:")
+if 'raw_audit_data' in st.session_state:
+    st.divider()
+    st.subheader("📝 Step 2: Auditor Recheck (Tally Style)")
+    st.write("Har entry ke liye sahi Account Head select karein:")
+    
+    # Editable Grid
+    edited_df = st.data_editor(
+        st.session_state['raw_audit_data'],
+        column_config={
+            "Account_Head": st.column_config.SelectboxColumn(
+                "Select Ledger",
+                options=ledger_list + ["Suspense A/c"],
+                required=True,
+                width="medium"
+            ),
+            "Entry_Type": st.column_config.SelectboxColumn(
+                "Income/Expense",
+                options=["Income", "Expense", "Transfer"],
+                required=True
+            ),
+            "Amount": st.column_config.NumberColumn("Amount (Final)", format="₹%.2f")
+        },
+        num_rows="dynamic",
+        use_container_width=True
+    )
+
+    # --- 4. PROFIT & LOSS GENERATION ---
+    if st.button("📈 Step 3: Generate Financial Report", type="primary"):
+        st.session_state['final_verified'] = edited_df
         
-        # Professional Grid Editor
-        edited_df = st.data_editor(
-            st.session_state['master_data'],
-            column_config={
-                "Target Ledger": st.column_config.SelectboxColumn(
-                    "Target Ledger",
-                    options=["Cash", "Bank", "Salary", "Purchase", "Sales", "GST", "Rent", "Suspense A/c"],
-                    required=True
-                ),
-                "Voucher": st.column_config.SelectboxColumn(
-                    "Voucher",
-                    options=["Payment (F5)", "Receipt (F6)", "Contra (F4)", "Journal (F7)"]
-                )
-            },
-            num_rows="dynamic",
-            use_container_width=True,
-            key="audit_grid_v2"
-        )
+        # P&L Calculation Logic
+        try:
+            df = edited_df.copy()
+            df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce').fillna(0)
+            
+            income = df[df['Entry_Type'] == "Income"]['Amount'].sum()
+            expense = df[df['Entry_Type'] == "Expense"]['Amount'].sum()
+            net_profit = income - expense
+            
+            st.divider()
+            st.header("📊 Profit & Loss Statement")
+            
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Total Income", f"₹{income:,.2f}")
+            col2.metric("Total Expense", f"₹{expense:,.2f}")
+            col3.metric("Net Profit/Loss", f"₹{net_profit:,.2f}", delta=float(net_profit))
 
-        # Export Report
-        if st.button("📈 Phase 3: Generate Final Financial Report", type="primary"):
-            st.success("Analysis Complete!")
+            # Breakdown Table
+            st.subheader("Ledger-wise Breakdown")
+            breakdown = df.groupby(['Account_Head', 'Entry_Type'])['Amount'].sum().reset_index()
+            st.table(breakdown)
+
+            # Export Options
+            st.subheader("📥 Export Final Report")
+            export_col1, export_col2 = st.columns(2)
             
-            # Export to Excel
-            buf = io.BytesIO()
-            with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
-                edited_df.to_excel(writer, index=False, sheet_name='Verified_Audit')
-            
-            st.download_button(
-                label="📥 Download Tally-Ready Excel",
-                data=buf.getvalue(),
-                file_name="Audit_Report_Shehzaad.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+            # Excel Export
+            with export_col1:
+                output_excel = io.BytesIO()
+                with pd.ExcelWriter(output_excel, engine='xlsxwriter') as writer:
+                    df.to_excel(writer, index=False, sheet_name='All_Entries')
+                    breakdown.to_excel(writer, index=False, sheet_name='Summary_PL')
+                
+                st.download_button(
+                    label="Excel Report Download",
+                    data=output_excel.getvalue(),
+                    file_name=f"Financial_Report_Shehzaad_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+
+            # CSV/Text Export (Simple PDF alternative for browser-based printing)
+            with export_col2:
+                report_text = f"FINANCIAL REPORT - SHEHZAAD KUTCHI MEMON\n"
+                report_text += f"Date: {datetime.now().strftime('%d-%m-%Y')}\n"
+                report_text += "="*40 + "\n"
+                report_text += f"Total Income: {income}\n"
+                report_text += f"Total Expense: {expense}\n"
+                report_text += f"Net Profit: {net_profit}\n"
+                report_text += "="*40 + "\n"
+                report_text += breakdown.to_string()
+                
+                st.download_button(
+                    label="Text/Print Report Download",
+                    data=report_text,
+                    file_name="Financial_Summary_Shehzaad.txt",
+                    mime="text/plain"
+                )
+        except Exception as e:
+            st.error(f"Report banane mein galti hui: {e}")
 
 apply_branding()
