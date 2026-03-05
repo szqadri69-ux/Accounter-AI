@@ -52,7 +52,10 @@ def extract_data(files):
                     if pages_data:
                         df_temp = pd.concat(pages_data, axis=0, ignore_index=True)
             elif f.name.lower().endswith(('.xls', '.xlsx')):
-                df_temp = pd.read_excel(f)
+                try:
+                    df_temp = pd.read_excel(f, engine='openpyxl')
+                except:
+                    df_temp = pd.read_excel(f, engine='xlrd')
             elif f.name.lower().endswith('.csv'):
                 df_temp = pd.read_csv(f)
             
@@ -71,152 +74,166 @@ def extract_data(files):
 def create_pdf_report(income, expense, profit, breakdown_df):
     pdf = FPDF()
     pdf.add_page()
+    
+    # Header
     pdf.set_font("Helvetica", 'B', 16)
-    pdf.cell(190, 10, txt="FINANCIAL PROFIT & LOSS REPORT", ln=True, align='C')
-    pdf.set_font("Helvetica", '', 12)
-    pdf.cell(190, 10, txt=f"Owner: Shehzaad Kutchi Memon", ln=True, align='C')
-    pdf.cell(190, 10, txt=f"Date: {datetime.now().strftime('%d-%m-%Y')}", ln=True, align='C')
-    pdf.ln(10)
-    
-    pdf.set_fill_color(240, 240, 240)
-    pdf.set_font("Helvetica", 'B', 12)
-    pdf.cell(95, 10, "Description", 1, 0, 'L', True)
-    pdf.cell(95, 10, "Amount (INR)", 1, 1, 'L', True)
-    
-    pdf.set_font("Helvetica", '', 12)
-    pdf.cell(95, 10, "Total Income", 1)
-    pdf.cell(95, 10, f"{income:,.2f}", 1, 1)
-    pdf.cell(95, 10, "Total Expense", 1)
-    pdf.cell(95, 10, f"{expense:,.2f}", 1, 1)
-    
-    pdf.set_font("Helvetica", 'B', 12)
-    pdf.cell(95, 10, "Net Profit/Loss", 1)
-    pdf.cell(95, 10, f"{profit:,.2f}", 1, 1)
-    pdf.ln(10)
-    
-    pdf.cell(190, 10, txt="Ledger-wise Breakdown:", ln=True)
-    pdf.set_font("Helvetica", 'B', 10)
-    pdf.cell(90, 10, "Account Head", 1, 0, 'L', True)
-    pdf.cell(50, 10, "Type", 1, 0, 'L', True)
-    pdf.cell(50, 10, "Amount", 1, 1, 'L', True)
+    pdf.set_text_color(30, 136, 229)
+    pdf.cell(190, 10, txt="FINANCIAL PROFIT & LOSS STATEMENT", ln=True, align='C')
     
     pdf.set_font("Helvetica", '', 10)
+    pdf.set_text_color(0, 0, 0)
+    pdf.cell(190, 7, txt=f"Proprietor: Shehzaad Kutchi Memon", ln=True, align='C')
+    pdf.cell(190, 7, txt=f"Report Generated: {datetime.now().strftime('%d-%m-%Y %H:%M')}", ln=True, align='C')
+    pdf.ln(10)
+    
+    # Summary Box (Automatic Calculations)
+    pdf.set_fill_color(230, 230, 230)
+    pdf.set_font("Helvetica", 'B', 12)
+    pdf.cell(95, 10, "Component", 1, 0, 'C', True)
+    pdf.cell(95, 10, "Total Amount (INR)", 1, 1, 'C', True)
+    
+    pdf.set_font("Helvetica", '', 11)
+    pdf.cell(95, 10, "Total Income", 1)
+    pdf.cell(95, 10, f"{income:,.2f}", 1, 1, 'R')
+    pdf.cell(95, 10, "Total Expenses", 1)
+    pdf.cell(95, 10, f"{expense:,.2f}", 1, 1, 'R')
+    
+    pdf.set_font("Helvetica", 'B', 12)
+    if profit >= 0:
+        pdf.set_text_color(0, 128, 0)
+        label = "NET PROFIT"
+    else:
+        pdf.set_text_color(255, 0, 0)
+        label = "NET LOSS"
+        
+    pdf.cell(95, 10, label, 1)
+    pdf.cell(95, 10, f"{profit:,.2f}", 1, 1, 'R')
+    pdf.set_text_color(0, 0, 0)
+    pdf.ln(10)
+    
+    # Breakdown Table
+    pdf.set_font("Helvetica", 'B', 11)
+    pdf.cell(190, 10, txt="Detailed Ledger Breakdown:", ln=True)
+    
+    pdf.set_fill_color(240, 245, 255)
+    pdf.set_font("Helvetica", 'B', 9)
+    pdf.cell(80, 8, "Ledger Account", 1, 0, 'L', True)
+    pdf.cell(50, 8, "Category", 1, 0, 'C', True)
+    pdf.cell(60, 8, "Amount", 1, 1, 'C', True)
+    
+    pdf.set_font("Helvetica", '', 9)
     for _, row in breakdown_df.iterrows():
-        pdf.cell(90, 10, str(row['Account_Head']), 1)
-        pdf.cell(50, 10, str(row['Entry_Type']), 1)
-        pdf.cell(50, 10, f"{row['Amount']:,.2f}", 1, 1)
+        pdf.cell(80, 8, str(row['Account_Head']), 1)
+        pdf.cell(50, 8, str(row['Entry_Type']), 1, 0, 'C')
+        pdf.cell(60, 8, f"{row['Amount']:,.2f}", 1, 1, 'R')
         
     return pdf.output()
 
 # --- 4. INTERFACE ---
-st.title("🚀 Accounter-AI Professional")
-st.markdown("##### Owner: Shehzaad Kutchi Memon")
+st.title("💼 Accounter-AI Professional")
+st.markdown("##### Developed for: Shehzaad Kutchi Memon")
 
-# Session State
 if 'ledgers' not in st.session_state:
-    st.session_state['ledgers'] = ["Cash", "Bank", "Sales", "Purchase", "Rent Income", "Salary Expense", "GST Income", "Other Income", "Suspense A/c"]
+    st.session_state['ledgers'] = ["Sales", "Purchase", "Rent", "Salary", "Bank Interest", "Commission", "Electricity", "Suspense A/c"]
 
-# Sidebar Management
+# Sidebar settings
 with st.sidebar:
-    st.header("Settings")
-    new_ledger = st.text_input("New Ledger Name:")
-    if st.button("Add to List"):
-        if new_ledger and new_ledger not in st.session_state['ledgers']:
-            st.session_state['ledgers'].append(new_ledger)
+    st.header("Ledger Management")
+    l_name = st.text_input("New Ledger Name:")
+    if st.button("Add Ledger"):
+        if l_name and l_name not in st.session_state['ledgers']:
+            st.session_state['ledgers'].append(l_name)
             st.rerun()
-    
     st.divider()
-    if st.button("🔄 Reset System"):
-        for key in list(st.session_state.keys()):
-            del st.session_state[key]
+    if st.button("Reset All Data"):
+        st.session_state.clear()
         st.rerun()
 
 # Step 1: Upload
-uploaded_files = st.file_uploader("Upload Statements", type=['pdf', 'xlsx', 'xls', 'csv'], accept_multiple_files=True)
+st.subheader("📁 Step 1: Upload PDF/Excel Data")
+files = st.file_uploader("Upload bank statements or accounting files", type=['pdf', 'xlsx', 'xls', 'csv'], accept_multiple_files=True)
 
-if uploaded_files:
-    if 'raw_audit_data' not in st.session_state:
-        if st.button("START AUDIT SCAN", type="primary", use_container_width=True):
-            data = extract_data(uploaded_files)
+if files:
+    if 'audit_df' not in st.session_state:
+        if st.button("🚀 FETCH & SCAN DATA", type="primary", use_container_width=True):
+            data = extract_data(files)
             if data is not None:
+                # Default categorizations for the auditor to check
                 data['Select Ledger'] = "Suspense A/c"
-                data['Income/Expense'] = "Expense"
-                data['Amount (Final)'] = 0.0
-                st.session_state['raw_audit_data'] = data
+                data['Entry Type'] = "Expense"
+                data['Final Amount'] = 0.0
+                st.session_state['audit_df'] = data
                 st.rerun()
 
-if 'raw_audit_data' in st.session_state:
+# Step 2: Categorize Entries
+if 'audit_df' in st.session_state:
     st.divider()
+    st.subheader("📝 Step 2: Set Ledger & Classification")
+    st.caption("Entries verify karein aur Category set karein.")
     
-    # TABLE TOOLBAR AREA
-    t_col1, t_col2 = st.columns([3, 1])
-    with t_col1:
-        st.subheader("Audit Worksheet")
-    with t_col2:
-        # Mini ledger manager tucked away near the table top
-        quick_add = st.popover("⚙️ Manage Ledgers")
-        q_name = quick_add.text_input("New Name:")
-        if quick_add.button("Add"):
-            if q_name and q_name not in st.session_state['ledgers']:
-                st.session_state['ledgers'].append(q_name)
-                st.rerun()
-
-    # Editable Grid
-    grid_key = f"audit_grid_{len(st.session_state['ledgers'])}"
-    
-    edited_df = st.data_editor(
-        st.session_state['raw_audit_data'],
+    verified_data = st.data_editor(
+        st.session_state['audit_df'],
         column_config={
-            "Select Ledger": st.column_config.SelectboxColumn(
-                "Ledger",
-                options=st.session_state['ledgers'],
-                required=True,
-                default="Suspense A/c"
-            ),
-            "Income/Expense": st.column_config.SelectboxColumn(
-                "Type",
-                options=["Income", "Expense", "Transfer"],
-                required=True,
-                default="Expense"
-            ),
-            "Amount (Final)": st.column_config.NumberColumn("Amount", format="₹%.2f", min_value=0)
+            "Select Ledger": st.column_config.SelectboxColumn("Ledger Head", options=st.session_state['ledgers'], required=True),
+            "Entry Type": st.column_config.SelectboxColumn("Category", options=["Income", "Expense", "Transfer"]),
+            "Final Amount": st.column_config.NumberColumn("Confirmed Amount", format="₹%.2f")
         },
-        num_rows="dynamic",
         use_container_width=True,
-        key=grid_key
+        num_rows="dynamic"
     )
 
-    # Final Actions
-    if st.button("GENERATE FINAL REPORT", type="primary", use_container_width=True):
-        st.session_state['raw_audit_data'] = edited_df
-        df = edited_df.copy()
-        df['Amount (Final)'] = pd.to_numeric(df['Amount (Final)'], errors='coerce').fillna(0)
+    # Step 3: Result & Automatic Calculation
+    if st.button("📊 GENERATE FINAL REPORT", type="primary", use_container_width=True):
+        # 1. Automatic Calculation Logic
+        st.session_state['audit_df'] = verified_data
+        df = verified_data.copy()
+        df['Final Amount'] = pd.to_numeric(df['Final Amount'], errors='coerce').fillna(0)
         
-        income = df[df['Income/Expense'] == "Income"]['Amount (Final)'].sum()
-        expense = df[df['Income/Expense'] == "Expense"]['Amount (Final)'].sum()
-        profit = income - expense
+        total_income = df[df['Entry Type'] == "Income"]['Final Amount'].sum()
+        total_expense = df[df['Entry Type'] == "Expense"]['Final Amount'].sum()
+        net_profit = total_income - total_expense
         
-        st.divider()
+        # 2. Display Dashboard
+        st.success("Calculations Completed Successfully!")
+        st.markdown("### 📈 Professional Profit & Loss Dashboard")
         m1, m2, m3 = st.columns(3)
-        m1.metric("Income", f"₹{income:,.2f}")
-        m2.metric("Expense", f"₹{expense:,.2f}")
-        m3.metric("P&L", f"₹{profit:,.2f}", delta=float(profit))
+        m1.metric("Gross Income", f"₹{total_income:,.2f}")
+        m2.metric("Total Operating Expenses", f"₹{total_expense:,.2f}")
+        m3.metric("Net Profit / Loss", f"₹{net_profit:,.2f}", delta=float(net_profit))
 
-        breakdown = df.groupby(['Select Ledger', 'Income/Expense'])['Amount (Final)'].sum().reset_index()
+        # 3. Automatic Ledger Grouping
+        breakdown = df.groupby(['Select Ledger', 'Entry Type'])['Final Amount'].sum().reset_index()
         breakdown.columns = ['Account_Head', 'Entry_Type', 'Amount']
-        
-        st.subheader("Summary Report")
-        st.table(breakdown)
 
-        ec1, ec2 = st.columns(2)
-        with ec1:
-            output_ex = io.BytesIO()
-            with pd.ExcelWriter(output_ex, engine='xlsxwriter') as writer:
-                df.to_excel(writer, index=False, sheet_name='Entries')
-                breakdown.to_excel(writer, index=False, sheet_name='Summary')
-            st.download_button("Excel Export", output_ex.getvalue(), "Report.xlsx")
-        with ec2:
-            pdf_output = create_pdf_report(income, expense, profit, breakdown)
-            st.download_button("PDF Export", pdf_output, "Report.pdf")
+        st.subheader("Automatic Ledger Summary")
+        st.dataframe(breakdown, use_container_width=True)
+
+        # 4. Final Export Options
+        st.divider()
+        st.subheader("📥 Download Final Report")
+        col_ex, col_pdf = st.columns(2)
+        
+        with col_ex:
+            # Automatic Excel Export
+            ex_io = io.BytesIO()
+            with pd.ExcelWriter(ex_io, engine='xlsxwriter') as writer:
+                verified_data.to_excel(writer, index=False, sheet_name='Detailed_Entries')
+                breakdown.to_excel(writer, index=False, sheet_name='Summary_Report')
+            st.download_button(
+                label="📥 Download Excel Report",
+                data=ex_io.getvalue(),
+                file_name=f"Accounting_Report_{datetime.now().strftime('%d%m%Y')}.xlsx",
+                use_container_width=True
+            )
+            
+        with col_pdf:
+            # Automatic PDF Generation
+            pdf_bytes = create_pdf_report(total_income, total_expense, net_profit, breakdown)
+            st.download_button(
+                label="📥 Download PDF Statement",
+                data=pdf_bytes,
+                file_name=f"PL_Statement_{datetime.now().strftime('%d%m%Y')}.pdf",
+                use_container_width=True
+            )
 
 apply_branding()
